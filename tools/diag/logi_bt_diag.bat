@@ -68,7 +68,7 @@ static class Diag
     static int Main(string[] args)
     {
         string outFile = args.Length > 0 ? args[0] : "logi_bt_diag_result.txt";
-        L("FerrisPulse Logitech BT diag v1  " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  OS=" + Environment.OSVersion + "  x64=" + Environment.Is64BitProcess);
+        L("FerrisPulse Logitech BT diag v2  " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  OS=" + Environment.OSVersion + "  x64=" + Environment.Is64BitProcess);
         List<Ep> eps = Enumerate();
         L("");
         L("== Logitech HID interfaces found: " + eps.Count);
@@ -142,7 +142,7 @@ static class Diag
             if (r == null) { L("  ping: no answer"); return; }
             L(string.Format("  ping OK, HID++ protocol {0}.{1}", r[4], r[5]));
 
-            ushort[] feats = { 0x0001, 0x0005, 0x1000, 0x1004, 0x2201, 0x2202, 0x1B04, 0x2110, 0x2111, 0x2121, 0x8100 };
+            ushort[] feats = { 0x0001, 0x0005, 0x1000, 0x1004, 0x2201, 0x2202, 0x1B04, 0x1814, 0x1815, 0x2110, 0x2111, 0x2121, 0x8100 };
             var idx = new Dictionary<ushort, byte>();
             foreach (ushort f in feats)
             {
@@ -195,6 +195,7 @@ static class Diag
                         i, cid, tid, ci[8], ci[9], ci[10], ci[11], ci[12], Hex(ci, 14)));
                 }
             }
+            if (idx[0x1814] != 0) L("  0x1814 hostInfo (nbHosts, currentHost): " + Hex(Req(idx[0x1814], 0, null), 10));
             if (idx[0x1004] != 0) L("  0x1004 battery status: " + Hex(Req(idx[0x1004], 1, null), 10));
             if (idx[0x1000] != 0) L("  0x1000 battery level: " + Hex(Req(idx[0x1000], 0, null), 10));
         }

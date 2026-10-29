@@ -48,7 +48,7 @@ D:\FerrisPulse · 灵脉\
     │   ├── RapooDeviceHelper.cs [雷柏无线鼠标 HID 通信协议]
     │   ├── VgnDeviceHelper.cs   [VGN / 蜻蜓 / ATK 协议解析]
     │   ├── LogitechDeviceHelper.cs [罗技 HID++ 协议解析（含蓝牙直连 vid&02046d 路径）]
-    │   ├── LogitechButtonDiversionHelper.cs [罗技 HID++ 0x1B04 顶部按键 (CID 0x00C4) 接管 → Win+Tab]
+    │   ├── LogitechButtonDiversionHelper.cs [罗技 HID++ 0x1B04 顶部按键 (CID 0x00C4) 接管 → Win+Tab 或 0x1814 切换蓝牙通道]
     │   ├── NuphyDeviceHelper.cs [NuPhy 键盘电量协议与侧灯控制]
     │   ├── ValkyrieDeviceHelper.cs [瓦尔基里全系键盘/鼠标私有 HID 协议、2.4G 接收器多模解析、8K 回报率与 DPI 调节]
     │   ├── FlydigiDeviceHelper.cs [飞智 APEX 6 / Vader 5 Pro GPA6 协议、0xFFA0 33B 帧、电量/充电解析]
@@ -132,7 +132,7 @@ D:\FerrisPulse · 灵脉\
 | **DPI 档位管理与 XY 轴比例调节** | `src/UI/Forms/DpiManagementDialog.cs` / `src/UI/Controls/DpiStageRowControl.cs` | DPI 档位增删、XY 轴独立调节 (4:3/16:10 比例联动) 与板载固化 |
 | **屏幕悬浮 OSD 指示器** | `src/UI/Forms/DpiOsdForm.cs` | 游戏前台免切焦点悬浮 HUD、DPI/XY独立双轴显示与回报率变动提示 |
 | **多设备优先级拖拽与首选设备** | `src/Hardware/DeviceManager.cs` / `DevicePriorityForm.cs` | 外设优先级权重与展示顺序 |
-| **罗技顶部按键 → Win+Tab** | `src/Hardware/LogitechButtonDiversionHelper.cs` | 0x1B04 divert CID 0x00C4，断连/唤醒后自动重新下发 |
+| **罗技顶部按键 → Win+Tab / 切换蓝牙通道** | `src/Hardware/LogitechButtonDiversionHelper.cs` | 0x1B04 divert CID 0x00C4，0x1814 setCurrentHost；断连/唤醒后自动重新下发 |
 | **鼠标侧键复制/粘贴映射** | `src/Services/SideButtonMacroService.cs` / `MainForm.Tray.cs` | 低级鼠标钩子吞掉前进/后退并注入 Ctrl+C/V，托盘子菜单开关 |
 | **按钮、滑块、分段选项卡外观** | `src/UI/Controls/*.cs` | 独立的原子自定义双缓冲 GDI+ 控件 |
 

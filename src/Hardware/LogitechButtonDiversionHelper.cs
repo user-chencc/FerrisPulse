@@ -3,7 +3,9 @@
 // 所属区域: Hardware (硬件驱动层)
 // 核心职责:
 //   罗技 HID++ 2.0 按键接管 (Feature 0x1B04 REPROG_CONTROLS_V4)：把鼠标顶部按键
-//   (CID 0x00C4, SmartShift/滚轮模式切换键) 临时 divert 给本程序，按下时注入 Win+Tab。
+//   (CID 0x00C4, SmartShift/滚轮模式切换键) 临时 divert 给本程序，按下时执行所选动作：
+//   Action 0 = 注入 Win+Tab；Action 1..3 = 经 Feature 0x1814 CHANGE_HOST setCurrentHost
+//   让鼠标切到 Easy-Switch 蓝牙通道 1..3 (设备立即断开重连目标主机，不回应答，只写不等)。
 //   1. 后台扫描线程每 10 秒枚举 046D 长报文 HID++ 端点 (含蓝牙 "vid&02046d" 路径)，
 //      每个端点一个会话线程；蓝牙/有线直连 devIdx=0xFF，接收器 (PID C5xx) 探测 1..6
 //   2. 会话线程单线程收发：未匹配的应答一律当作事件分发，读缓冲/OVERLAPPED 均放在
@@ -16,7 +18,7 @@
 //   5. 停用/退出时撤销 divert (flags=0x02)，顶部键恢复原厂功能
 //   协议实测 (MX Anywhere 3S 蓝牙, 046D:B037): HID++ 4.5, 0xFF43 / 20 字节端点,
 //   0x1B04 @0x0A, CID 0x00C4 flags=0x31 (可 divert)。
-//   配置键 (HKCU\Software\FerrisPulse): LogiTopButtonWinTabEnabled (默认 0)
+//   配置键 (HKCU\Software\FerrisPulse): LogiTopButtonEnabled (默认 0), LogiTopButtonAction (默认 0)
 //   软件 ID 固定 0x0B，与主轮询 (0x08) 区分，互不抢应答。
 // 依赖关系: LogitechDeviceHelper.cs (SetupAPI/HidD 声明与路径判定), SideButtonMacroService.cs (SendChord),
 //   ConfigManager.cs
@@ -37,7 +39,9 @@ namespace RazerBatteryTray
 {
     public static class LogitechButtonDiversionHelper
     {
-        public const string EnabledKey = "LogiTopButtonWinTabEnabled";
+        public const string EnabledKey = "LogiTopButtonEnabled";
+        public const string ActionKey = "LogiTopButtonAction";
+        public const int ActionWinTab = 0;   // 1..3 = 切换到 Easy-Switch 通道 1..3
         public const ushort CidTopButton = 0x00C4;
 
         private const byte SoftwareId = 0x0B;
@@ -52,15 +56,26 @@ namespace RazerBatteryTray
         private static long lastActivityTicks;
         private static int reassertGeneration;
 
+        private static volatile int action = ActionWinTab;
+
         public static bool IsRunning { get { return running; } }
+        public static int Action { get { return action; } }
 
         public static void LoadFromConfig()
         {
+            int a = ConfigManager.GetInt(ActionKey, ActionWinTab);
+            action = (a >= 0 && a <= 3) ? a : ActionWinTab;
             if (ConfigManager.GetBool(EnabledKey, false)) Start();
         }
 
-        public static void SetEnabled(bool enable)
+        /// <summary>enable=false 时撤销接管；enable=true 时按 newAction (0=Win+Tab, 1..3=切换蓝牙通道) 生效。</summary>
+        public static void SetMode(bool enable, int newAction)
         {
+            if (newAction >= 0 && newAction <= 3)
+            {
+                action = newAction;
+                ConfigManager.SetInt(ActionKey, newAction);
+            }
             ConfigManager.SetBool(EnabledKey, enable);
             if (enable) Start(); else Stop();
         }
@@ -222,17 +237,13 @@ namespace RazerBatteryTray
             }
         }
 
-        private static void OnTopButtonPressed()
-        {
-            ThreadPool.QueueUserWorkItem(_ => SideButtonMacroService.SendChord(VK_LWIN, VK_TAB));
-        }
-
         private sealed class DevState
         {
             public bool Probed;
             public bool Unsupported;
             public byte ReprogIdx;
             public byte StatusIdx;
+            public byte ChangeHostIdx;
             public bool Diverted;
             public bool EverDiverted;
             public bool Pressed;
@@ -339,6 +350,9 @@ namespace RazerBatteryTray
                 byte[] fs = Request(d, 0x00, 0, new byte[] { 0x1D, 0x4B }, 400);
                 st.StatusIdx = (fs != null) ? fs[4] : (byte)0;
 
+                byte[] fh = Request(d, 0x00, 0, new byte[] { 0x18, 0x14 }, 400);
+                st.ChangeHostIdx = (fh != null) ? fh[4] : (byte)0;
+
                 byte[] cnt = Request(d, st.ReprogIdx, 0, null, 400);
                 if (cnt == null) return false;
                 bool found = false;
@@ -381,7 +395,7 @@ namespace RazerBatteryTray
                     {
                         if (((rep[k] << 8) | rep[k + 1]) == CidTopButton) pressed = true;
                     }
-                    if (pressed && !st.Pressed) OnTopButtonPressed();
+                    if (pressed && !st.Pressed) OnTopButtonPressed(rep[1], st);
                     st.Pressed = pressed;
                 }
                 else if (st.StatusIdx != 0 && rep[2] == st.StatusIdx)
@@ -389,6 +403,25 @@ namespace RazerBatteryTray
                     // 0x1D4B 无线状态: 设备重连后 divert 已丢失
                     reassertRequested = true;
                 }
+            }
+
+            private void OnTopButtonPressed(byte devIdx, DevState st)
+            {
+                int a = action;
+                if (a == ActionWinTab)
+                {
+                    ThreadPool.QueueUserWorkItem(_ => SideButtonMacroService.SendChord(VK_LWIN, VK_TAB));
+                    return;
+                }
+                if (st.ChangeHostIdx == 0) return; // 设备没有 0x1814 CHANGE_HOST
+                // setCurrentHost (function 1)，参数为 0 起的通道号
+                byte[] tx = new byte[OutLen];
+                tx[0] = 0x11;
+                tx[1] = devIdx;
+                tx[2] = st.ChangeHostIdx;
+                tx[3] = (byte)((1 << 4) | SoftwareId);
+                tx[4] = (byte)(a - 1);
+                Write(tx);
             }
 
             private byte[] Request(byte devIdx, byte featIdx, int fn, byte[] pars, int timeoutMs)
