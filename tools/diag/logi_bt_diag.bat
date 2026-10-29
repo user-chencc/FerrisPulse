@@ -68,7 +68,7 @@ static class Diag
     static int Main(string[] args)
     {
         string outFile = args.Length > 0 ? args[0] : "logi_bt_diag_result.txt";
-        L("FerrisPulse Logitech BT diag v1  " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  OS=" + Environment.OSVersion + "  x64=" + Environment.Is64BitProcess);
+        L("FerrisPulse Logitech BT diag v3  " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  OS=" + Environment.OSVersion + "  x64=" + Environment.Is64BitProcess);
         List<Ep> eps = Enumerate();
         L("");
         L("== Logitech HID interfaces found: " + eps.Count);
@@ -138,6 +138,21 @@ static class Diag
         outLen = e.Caps.OutputReportByteLength; inLen = e.Caps.InputReportByteLength;
         try
         {
+            // Receivers (Bolt/Unifying/Lightspeed, PID C5xx) host several devices on slots 1..6; direct BT/USB devices answer on 0xFF
+            byte[] slots = (e.Pid >= 0xC500 && e.Pid <= 0xC5FF) ? new byte[] { 1, 2, 3, 4, 5, 6 } : new byte[] { 0xFF };
+            foreach (byte s in slots)
+            {
+                devIdx = s;
+                if (slots.Length > 1) L("  -- receiver slot " + s);
+                ProbeDevice();
+            }
+        }
+        finally { CloseHandle(evt); CloseHandle(dev); }
+    }
+
+    static void ProbeDevice()
+    {
+        {
             byte[] r = Req(0x00, 1, new byte[] { 0, 0, 0x5A });
             if (r == null) { L("  ping: no answer"); return; }
             L(string.Format("  ping OK, HID++ protocol {0}.{1}", r[4], r[5]));
@@ -198,7 +213,6 @@ static class Diag
             if (idx[0x1004] != 0) L("  0x1004 battery status: " + Hex(Req(idx[0x1004], 1, null), 10));
             if (idx[0x1000] != 0) L("  0x1000 battery level: " + Hex(Req(idx[0x1000], 0, null), 10));
         }
-        finally { CloseHandle(evt); CloseHandle(dev); }
     }
 
     // Sends one HID++ 2.0 request and waits for the matching reply (or an error frame). Returns null on timeout.
