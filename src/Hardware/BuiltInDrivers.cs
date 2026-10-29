@@ -441,6 +441,22 @@ namespace RazerBatteryTray
 
             }
 
+            else if (nameLower.Contains("mx anywhere") || nameLower.Contains("mx master"))
+
+            {
+
+                // MX 办公系列: 0x2201 实测 DPI 范围 200-8000 步进 50 (MX Anywhere 3S 蓝牙直连), 无 0x8060 回报率特性
+
+                maxDpi = 8000;
+
+                dev.Capabilities.MinDpi = 200;
+
+                dev.Capabilities.SupportsPollingRate = false;
+
+                sensorDesc = "罗技 Darkfield 高精度激光传感器 (最高 8,000 DPI)";
+
+            }
+
             dev.Capabilities.MaxDpi = maxDpi;
 
             dev.Capabilities.SensorDescription = sensorDesc;

@@ -680,6 +680,23 @@ namespace RazerBatteryTray
             catch { }
         }
 
+        private static bool IsDuplicateOfLogitechBluetooth(List<MouseBatteryInfo> list, string name, string originalName)
+        {
+            for (int i = 0; i < list.Count; i++)
+            {
+                var d = list[i];
+                if (d == null || !string.Equals(d.Brand, "Logitech", StringComparison.OrdinalIgnoreCase)) continue;
+                if (d.Transport == null || d.Transport.IndexOf("蓝牙", StringComparison.Ordinal) < 0) continue;
+                if (string.IsNullOrEmpty(d.DeviceName)) continue;
+                if (string.Equals(d.DeviceName, name, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(d.DeviceName, originalName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         public static void MergeExternalDriverDevice(List<MouseBatteryInfo> list, MouseBatteryInfo dev)
         {
             if (list == null || dev == null) return;
@@ -1958,6 +1975,13 @@ namespace RazerBatteryTray
                             devInfo.ExactBatteryPercent = devInfo.BatteryPercent;
                         }
                         devInfo.LastUpdated = cfg.LastSeen;
+                    }
+
+                    // 手动添加的蓝牙罗技鼠标 (按 MAC 读通用电量) 与 HID++ 蓝牙直连识别出的是同一只鼠标时，
+                    // 只保留 HID++ 那一份 (它能调 DPI)，避免列表里出现两个同名设备
+                    if (!isLogitech && IsDuplicateOfLogitechBluetooth(list, devInfo.DeviceName, cfg.OriginalName))
+                    {
+                        continue;
                     }
 
                     list.Add(devInfo);
