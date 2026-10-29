@@ -9,7 +9,7 @@
 //   3. 全屏游戏自动停用: 2 秒后台节拍缓存 GameDetector 结果, 钩子回调内只读缓存,
 //      绝不在钩子线程做耗时探测 (避免超出 LowLevelHooksTimeout 被系统摘钩)
 //   4. 忽略带 LLMHF_INJECTED 标记的注入事件, 防止与其他改键软件互相回环
-//   5. 组合键通过 SendInput 在线程池异步注入, 钩子回调立即返回
+//   5. 组合键通过 SendInput 在线程池异步注入, 钩子回调立即返回 (SendChord 亦供罗技顶部键 Win+Tab 复用)
 //   配置键 (HKCU\Software\FerrisPulse): SideButtonMacroEnabled (默认 0),
 //   SideButtonMacroSwapped (默认 0), SideButtonMacroPauseInGames (默认 1)
 //   线程契约: Start/Stop 必须在拥有消息循环的 UI 线程调用 (低级钩子依赖该线程泵消息)。
@@ -35,6 +35,7 @@ namespace RazerBatteryTray
         public const string PauseInGamesKey = "SideButtonMacroPauseInGames";
 
         private const int WH_MOUSE_LL = 14;
+        private const int WM_MOUSEMOVE = 0x0200;
         private const int WM_XBUTTONDOWN = 0x020B;
         private const int WM_XBUTTONUP = 0x020C;
         private const int XBUTTON1 = 0x0001;   // 后侧键 (浏览器"后退")
@@ -46,6 +47,8 @@ namespace RazerBatteryTray
         private const ushort VK_V = 0x56;
         private const uint INPUT_KEYBOARD = 1;
         private const uint KEYEVENTF_KEYUP = 0x0002;
+        private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
+        private const ushort VK_LWIN = 0x5B;
 
         private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
         private static LowLevelMouseProc proc = HookCallback;
@@ -194,7 +197,12 @@ namespace RazerBatteryTray
             if (nCode >= 0)
             {
                 int msg = wParam.ToInt32();
-                if (msg == WM_XBUTTONDOWN || msg == WM_XBUTTONUP)
+                if (msg == WM_MOUSEMOVE)
+                {
+                    // 顺带给罗技顶部键接管提供"鼠标唤醒"信号 (仅一次原子交换, 不拖慢钩子)
+                    LogitechButtonDiversionHelper.NotifyMouseActivity();
+                }
+                else if (msg == WM_XBUTTONDOWN || msg == WM_XBUTTONUP)
                 {
                     // MSLLHOOKSTRUCT: POINT pt (8) | mouseData (4) | flags (4) | time | dwExtraInfo
                     int mouseData = Marshal.ReadInt32(lParam, 8);
@@ -210,7 +218,7 @@ namespace RazerBatteryTray
                                 if (button == XBUTTON1) suppressX1Up = true; else suppressX2Up = true;
                                 bool isCopy = (button == XBUTTON2) != Swapped;
                                 ushort key = isCopy ? VK_C : VK_V;
-                                ThreadPool.QueueUserWorkItem(_ => SendCtrlChord(key));
+                                ThreadPool.QueueUserWorkItem(_ => SendChord(VK_CONTROL, key));
                                 return new IntPtr(1);
                             }
                         }
@@ -226,15 +234,16 @@ namespace RazerBatteryTray
             return CallNextHookEx(hookId, nCode, wParam, lParam);
         }
 
-        private static void SendCtrlChord(ushort vk)
+        /// <summary>注入 "修饰键+按键" 组合 (如 Ctrl+C、Win+Tab)；也供 LogitechButtonDiversionHelper 复用。</summary>
+        internal static void SendChord(ushort modifierVk, ushort vk)
         {
             try
             {
                 INPUT[] inputs = new INPUT[4];
-                inputs[0] = MakeKey(VK_CONTROL, false);
+                inputs[0] = MakeKey(modifierVk, false);
                 inputs[1] = MakeKey(vk, false);
                 inputs[2] = MakeKey(vk, true);
-                inputs[3] = MakeKey(VK_CONTROL, true);
+                inputs[3] = MakeKey(modifierVk, true);
                 SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
             }
             catch { }
@@ -246,7 +255,7 @@ namespace RazerBatteryTray
             input.type = INPUT_KEYBOARD;
             input.u.ki.wVk = vk;
             input.u.ki.wScan = (ushort)MapVirtualKey(vk, 0);
-            input.u.ki.dwFlags = keyUp ? KEYEVENTF_KEYUP : 0;
+            input.u.ki.dwFlags = (keyUp ? KEYEVENTF_KEYUP : 0) | (vk == VK_LWIN ? KEYEVENTF_EXTENDEDKEY : 0);
             return input;
         }
     }

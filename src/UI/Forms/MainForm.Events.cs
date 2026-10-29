@@ -156,6 +156,8 @@ namespace RazerBatteryTray
 
             {
 
+                LogitechButtonDiversionHelper.NotifyMouseActivity();
+
                 HandleMouseWakeInput(m.LParam);
 
             }
