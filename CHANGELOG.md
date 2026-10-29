@@ -8,8 +8,8 @@
 - 新增 `SideButtonMacroService`：托盘菜单「鼠标侧键复制/粘贴」一键开启后，前侧键 = `Ctrl+C`、后侧键 = `Ctrl+V`（可对调），对所有发送标准前进/后退信号的鼠标生效，无需安装罗技 / 雷蛇等官方驱动。
 - 全屏游戏时自动停用（默认开启，可关闭），游戏内侧键保持原样；默认关闭，需用户手动启用。
 
-### 🖱️ 罗技顶部按键 = Win+Tab / 切换蓝牙通道（免 Logi Options+）
-- 新增 `LogitechButtonDiversionHelper`：通过 HID++ `0x1B04` 临时接管罗技鼠标顶部按键（CID `0x00C4`，如 MX Anywhere 3S 的滚轮模式键），按下可打开任务视图（Win+Tab），或通过 `0x1814 CHANGE_HOST` 让鼠标直接切到指定的 Easy-Switch 蓝牙通道（1/2/3），一键把鼠标交给另一台电脑。
+### 🖱️ 罗技顶部按键 = Win+Tab（免 Logi Options+）
+- 新增 `LogitechButtonDiversionHelper`：通过 HID++ `0x1B04` 临时接管罗技鼠标顶部按键（CID `0x00C4`，如 MX Anywhere 3S 的滚轮模式键），按下即打开任务视图（Win+Tab）。
 - 鼠标断开、休眠唤醒、切换蓝牙主机回来后自动重新接管；停用或退出灵脉时把按键还给鼠标。托盘「鼠标按键映射」子菜单开关，默认关闭。
 
 ### 🖱️ 罗技蓝牙直连鼠标支持 DPI 调节
