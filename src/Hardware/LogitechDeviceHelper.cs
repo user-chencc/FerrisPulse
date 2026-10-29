@@ -4,6 +4,7 @@
 // 核心职责:
 //   罗技 (Logitech) HID++ 1.0/2.0 私有协议通信、电量检测、DPI调节 (Feature 0x2201/0x2202 支持XY轴独立) 与回报率设置 (Feature 0x8060/0x8061 最高8000Hz) 实现
 //   另含 G PRO X Wireless 耳机 (046D:0ABA) 专属 HID++ 4.2 电量通道 (Feature 0x1F20 ADC_MEASUREMENT)
+//   蓝牙直连设备 (BLE 路径 "vid&02046d") 同样走 devIdx=0xFF 的 HID++ 2.0 通道 (IsLogitechHidPath / IsBluetoothHidPath)
 // 依赖关系: NativeMethods.cs, MouseBatteryInfo.cs
 //
 // ⚠️ AI 维护准则 (AI MAINTENANCE DIRECTIVE - DO NOT REMOVE) ⚠️:
@@ -510,6 +511,8 @@ public static class LogitechDeviceHelper
             case 0xB023: return "Logitech MX Master 3";
             case 0x4090: return "Logitech MX Master 3S";
             case 0x408F: return "Logitech MX Anywhere 3";
+            case 0xB037: return "Logitech MX Anywhere 3S";
+            case 0xB02C: return "Logitech Signature M750";
             case 0x406B: return "Logitech MX Keys 无线键盘";
             case 0x408A: return "Logitech MX Keys Mini";
             case 0x4082: return "Logitech G913 TKL 机械键盘";
@@ -844,6 +847,23 @@ public static class LogitechDeviceHelper
         return null;
     }
 
+    // 蓝牙直连 (BLE HOGP / 经典蓝牙) 的 HID 路径不带 "vid_046d"，而是 "_dev_vid&02046d_pid&b037"
+    // (BLE) 或 "vid&0002046d" (经典蓝牙) 写法；只认 "vid_046d" 会漏掉 MX Anywhere 3S 等蓝牙直连鼠标。
+    // 实测 (MX Anywhere 3S, 046D:B037): 0xFF43 / 20 字节 HID++ 4.5 端点 devIdx=0xFF 应答正常。
+    public static bool IsLogitechHidPath(string devicePath)
+    {
+        if (string.IsNullOrEmpty(devicePath)) return false;
+        string lower = devicePath.ToLowerInvariant();
+        return lower.Contains("vid_046d") || lower.Contains("vid&02046d") || lower.Contains("vid&0002046d");
+    }
+
+    public static bool IsBluetoothHidPath(string devicePath)
+    {
+        if (string.IsNullOrEmpty(devicePath)) return false;
+        string lower = devicePath.ToLowerInvariant();
+        return lower.Contains("{00001812-0000-1000-8000-00805f9b34fb}") || lower.Contains("vid&02046d") || lower.Contains("vid&0002046d");
+    }
+
     public static List<MouseBatteryInfo> QueryAllLogitechDevices()
     {
         lock (hidLock)
@@ -883,7 +903,7 @@ public static class LogitechDeviceHelper
                     {
                         IntPtr pDevicePath = new IntPtr(detailBuffer.ToInt64() + 4);
                         string devicePath = Marshal.PtrToStringAuto(pDevicePath);
-                        if (devicePath != null && devicePath.ToLower().Contains("vid_046d"))
+                        if (IsLogitechHidPath(devicePath))
                         {
                             IntPtr handle = CreateFile(
                                 devicePath,
@@ -1435,6 +1455,7 @@ public static class LogitechDeviceHelper
 
                                     int[] stageTable = new int[] { 400, 800, 1600, 3200, 6400 };
 
+                                    bool isBluetoothDirect = IsBluetoothHidPath(bestEndpoint.DevicePath);
                                     MouseBatteryInfo info = new MouseBatteryInfo
                                     {
                                         DeviceId = deviceId,
@@ -1442,7 +1463,7 @@ public static class LogitechDeviceHelper
                                         Brand = "Logitech",
                                         DeviceName = finalName,
                                         Category = cat,
-                                        Transport = isDongle ? "Lightspeed 无线" : "USB 有线",
+                                        Transport = isDongle ? "Lightspeed 无线" : (isBluetoothDirect ? "蓝牙 (HID++)" : "USB 有线"),
                                         IsConnected = true,
                                         IsSleeping = !deviceOnline,
                                         IsDonglePresent = true,

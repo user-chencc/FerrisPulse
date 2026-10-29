@@ -405,6 +405,40 @@ namespace RazerBatteryTray
             });
             contextMenu.Items.Add(lowBatteryAlertMenuItem);
 
+            var sideMacroMenu = new ToolStripMenuItem("鼠标按键映射");
+            ConfigureSubMenuDropDown(sideMacroMenu.DropDown);
+            var sideMacroToggle = new ToolStripMenuItem("启用 (前侧键复制 · 后侧键粘贴)");
+            var sideMacroSwap = new ToolStripMenuItem("对调 (前侧键粘贴 · 后侧键复制)");
+            var sideMacroGame = new ToolStripMenuItem("侧键: 全屏游戏时自动停用");
+            var logiTopWinTab = new ToolStripMenuItem("罗技顶部按键 = Win+Tab (MX / M750)");
+            logiTopWinTab.Click += (s, e) => {
+                LogitechButtonDiversionHelper.SetEnabled(!LogitechButtonDiversionHelper.IsRunning);
+                logiTopWinTab.Checked = LogitechButtonDiversionHelper.IsRunning;
+                sideMacroMenu.Checked = SideButtonMacroService.IsRunning || LogitechButtonDiversionHelper.IsRunning;
+            };
+            sideMacroToggle.Click += (s, e) => {
+                bool ok = SideButtonMacroService.SetEnabled(!SideButtonMacroService.IsRunning, true);
+                sideMacroToggle.Checked = ok;
+                sideMacroMenu.Checked = ok || LogitechButtonDiversionHelper.IsRunning;
+            };
+            sideMacroSwap.Click += (s, e) => {
+                SideButtonMacroService.SetSwapped(!SideButtonMacroService.Swapped);
+                sideMacroSwap.Checked = SideButtonMacroService.Swapped;
+            };
+            sideMacroGame.Click += (s, e) => {
+                SideButtonMacroService.SetPauseInGames(!SideButtonMacroService.PauseInGames);
+                sideMacroGame.Checked = SideButtonMacroService.PauseInGames;
+            };
+            sideMacroMenu.DropDownOpening += (s, e) => {
+                sideMacroToggle.Checked = SideButtonMacroService.IsRunning;
+                sideMacroSwap.Checked = SideButtonMacroService.Swapped;
+                sideMacroGame.Checked = SideButtonMacroService.PauseInGames;
+                logiTopWinTab.Checked = LogitechButtonDiversionHelper.IsRunning;
+            };
+            sideMacroMenu.Checked = SideButtonMacroService.IsRunning || LogitechButtonDiversionHelper.IsRunning;
+            sideMacroMenu.DropDownItems.AddRange(new ToolStripItem[] { sideMacroToggle, sideMacroSwap, sideMacroGame, new ToolStripSeparator(), logiTopWinTab });
+            contextMenu.Items.Add(sideMacroMenu);
+
             autoStartMenuItem = new ToolStripMenuItem("开机自动启动", null, (s, e) => {
                 SetAutoStart(!IsAutoStartEnabled(), true);
                 autoStartMenuItem.Checked = IsAutoStartEnabled();
@@ -1636,6 +1670,8 @@ namespace RazerBatteryTray
         {
             UpdateManager.OnPendingUpdateChanged -= OnPendingUpdateChangedHandler;
             StopDpiMonitor();
+            SideButtonMacroService.Stop();
+            LogitechButtonDiversionHelper.Stop();
             if (trayIcon != null)
             {
                 trayIcon.Visible = false;

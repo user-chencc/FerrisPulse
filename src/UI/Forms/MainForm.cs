@@ -926,6 +926,10 @@ namespace RazerBatteryTray
 
             LoadConfig();
 
+            SideButtonMacroService.LoadFromConfig();
+
+            LogitechButtonDiversionHelper.LoadFromConfig();
+
             isRestoringPosition = true;
 
             try
