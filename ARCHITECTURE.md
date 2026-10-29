@@ -65,7 +65,8 @@ D:\FerrisPulse · 灵脉\
     │
     ├── Services\               [后台长效服务层]
     │   ├── GameDetector.cs     [独占全屏与焦点游戏检测服务，带系统白名单与防抖]
-    │   └── ChimeSynthesizer.cs [44.1kHz 16-bit PCM 柔和纯音双音合成器]
+    │   ├── ChimeSynthesizer.cs [44.1kHz 16-bit PCM 柔和纯音双音合成器]
+    │   └── SideButtonMacroService.cs [WH_MOUSE_LL 侧键拦截 → SendInput 复制/粘贴，全屏游戏自动停用]
     │
     └── UI\                     [界面渲染与用户交互层]
         ├── Theme\              [设计系统与矢量渲染]
@@ -130,6 +131,7 @@ D:\FerrisPulse · 灵脉\
 | **DPI 档位管理与 XY 轴比例调节** | `src/UI/Forms/DpiManagementDialog.cs` / `src/UI/Controls/DpiStageRowControl.cs` | DPI 档位增删、XY 轴独立调节 (4:3/16:10 比例联动) 与板载固化 |
 | **屏幕悬浮 OSD 指示器** | `src/UI/Forms/DpiOsdForm.cs` | 游戏前台免切焦点悬浮 HUD、DPI/XY独立双轴显示与回报率变动提示 |
 | **多设备优先级拖拽与首选设备** | `src/Hardware/DeviceManager.cs` / `DevicePriorityForm.cs` | 外设优先级权重与展示顺序 |
+| **鼠标侧键复制/粘贴映射** | `src/Services/SideButtonMacroService.cs` / `MainForm.Tray.cs` | 低级鼠标钩子吞掉前进/后退并注入 Ctrl+C/V，托盘子菜单开关 |
 | **按钮、滑块、分段选项卡外观** | `src/UI/Controls/*.cs` | 独立的原子自定义双缓冲 GDI+ 控件 |
 
 ---

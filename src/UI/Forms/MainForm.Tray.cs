@@ -405,6 +405,32 @@ namespace RazerBatteryTray
             });
             contextMenu.Items.Add(lowBatteryAlertMenuItem);
 
+            var sideMacroMenu = new ToolStripMenuItem("鼠标侧键复制/粘贴");
+            ConfigureSubMenuDropDown(sideMacroMenu.DropDown);
+            var sideMacroToggle = new ToolStripMenuItem("启用 (前侧键复制 · 后侧键粘贴)");
+            var sideMacroSwap = new ToolStripMenuItem("对调 (前侧键粘贴 · 后侧键复制)");
+            var sideMacroGame = new ToolStripMenuItem("全屏游戏时自动停用");
+            sideMacroToggle.Click += (s, e) => {
+                bool ok = SideButtonMacroService.SetEnabled(!SideButtonMacroService.IsRunning, true);
+                sideMacroToggle.Checked = ok;
+                sideMacroMenu.Checked = ok;
+            };
+            sideMacroSwap.Click += (s, e) => {
+                SideButtonMacroService.SetSwapped(!SideButtonMacroService.Swapped);
+                sideMacroSwap.Checked = SideButtonMacroService.Swapped;
+            };
+            sideMacroGame.Click += (s, e) => {
+                SideButtonMacroService.SetPauseInGames(!SideButtonMacroService.PauseInGames);
+                sideMacroGame.Checked = SideButtonMacroService.PauseInGames;
+            };
+            sideMacroMenu.DropDownOpening += (s, e) => {
+                sideMacroToggle.Checked = SideButtonMacroService.IsRunning;
+                sideMacroSwap.Checked = SideButtonMacroService.Swapped;
+                sideMacroGame.Checked = SideButtonMacroService.PauseInGames;
+            };
+            sideMacroMenu.DropDownItems.AddRange(new ToolStripItem[] { sideMacroToggle, sideMacroSwap, sideMacroGame });
+            contextMenu.Items.Add(sideMacroMenu);
+
             autoStartMenuItem = new ToolStripMenuItem("开机自动启动", null, (s, e) => {
                 SetAutoStart(!IsAutoStartEnabled(), true);
                 autoStartMenuItem.Checked = IsAutoStartEnabled();
@@ -1636,6 +1662,7 @@ namespace RazerBatteryTray
         {
             UpdateManager.OnPendingUpdateChanged -= OnPendingUpdateChangedHandler;
             StopDpiMonitor();
+            SideButtonMacroService.Stop();
             if (trayIcon != null)
             {
                 trayIcon.Visible = false;

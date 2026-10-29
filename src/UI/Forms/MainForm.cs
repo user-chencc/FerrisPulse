@@ -926,6 +926,8 @@ namespace RazerBatteryTray
 
             LoadConfig();
 
+            SideButtonMacroService.LoadFromConfig();
+
             isRestoringPosition = true;
 
             try
