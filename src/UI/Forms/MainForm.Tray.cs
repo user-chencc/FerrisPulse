@@ -439,6 +439,77 @@ namespace RazerBatteryTray
             sideMacroMenu.DropDownItems.AddRange(new ToolStripItem[] { sideMacroToggle, sideMacroSwap, sideMacroGame, new ToolStripSeparator(), logiTopWinTab });
             contextMenu.Items.Add(sideMacroMenu);
 
+            // 罗技滚轮力度 (SmartShift)：滚速超过阈值时一格一格的棘轮自动切换为顺滑滚动；值越小越容易切换
+            var smartShiftMenu = new ToolStripMenuItem("罗技滚轮力度 (SmartShift)");
+            ConfigureSubMenuDropDown(smartShiftMenu.DropDown);
+            var smartShiftStatus = new ToolStripMenuItem("正在读取...");
+            smartShiftStatus.Enabled = false;
+            smartShiftMenu.DropDownItems.Add(smartShiftStatus);
+            smartShiftMenu.DropDownItems.Add(new ToolStripSeparator());
+            // Tag = int[] { mode, threshold }；mode 1 = 一直顺滑滚动，2 = 棘轮 + 阈值自动切换 (255 = 永不切换)
+            string[] ssLabels = new string[] { "很灵敏 (轻轻一拨就顺滑)", "适中", "需要用力拨才顺滑", "一直一格一格 (关闭自动切换)", "一直顺滑滚动" };
+            int[][] ssValues = new int[][] { new int[] { 2, 5 }, new int[] { 2, 15 }, new int[] { 2, 30 }, new int[] { 2, LogitechDeviceHelper.SmartShiftNeverDisengage }, new int[] { 1, 0 } };
+            Action<int, int, bool> markSmartShift = (mode, threshold, found) => {
+                int best = -1;
+                if (found)
+                {
+                    if (mode == 1) best = 4;
+                    else if (threshold >= LogitechDeviceHelper.SmartShiftNeverDisengage) best = 3;
+                    else
+                    {
+                        int bestDiff = int.MaxValue;
+                        for (int k = 0; k < 3; k++)
+                        {
+                            int diff = Math.Abs(ssValues[k][1] - threshold);
+                            if (diff < bestDiff) { bestDiff = diff; best = k; }
+                        }
+                    }
+                    smartShiftStatus.Text = (mode == 1) ? "当前: 一直顺滑滚动"
+                        : (threshold >= LogitechDeviceHelper.SmartShiftNeverDisengage ? "当前: 一直一格一格" : string.Format("当前切换阈值: {0} (越小越灵敏)", threshold));
+                }
+                else
+                {
+                    smartShiftStatus.Text = "未找到支持的罗技鼠标 (动一下鼠标再打开)";
+                }
+                int idx = 0;
+                foreach (ToolStripItem it in smartShiftMenu.DropDownItems)
+                {
+                    ToolStripMenuItem mi = it as ToolStripMenuItem;
+                    if (mi == null || mi == smartShiftStatus) continue;
+                    mi.Checked = (idx == best);
+                    idx++;
+                }
+            };
+            for (int i = 0; i < ssLabels.Length; i++)
+            {
+                var mi = new ToolStripMenuItem(ssLabels[i]);
+                mi.Tag = ssValues[i];
+                mi.Click += (s, e) => {
+                    int[] v = (int[])((ToolStripMenuItem)s).Tag;
+                    ThreadPool.QueueUserWorkItem(_ => {
+                        int n = LogitechDeviceHelper.SetSmartShiftAll(v[0], v[1]);
+                        try
+                        {
+                            this.BeginInvoke(new Action(() => {
+                                if (n > 0) markSmartShift(v[0], v[1], true);
+                                else SafeShowBalloonTip(3000, "FerrisPulse · 罗技滚轮力度", "没有找到支持滚轮力度调节的罗技鼠标。请动一下鼠标让它醒来再试 (M750 等型号的滚轮不支持调节)。", ToolTipIcon.Warning);
+                            }));
+                        }
+                        catch { }
+                    });
+                };
+                smartShiftMenu.DropDownItems.Add(mi);
+            }
+            smartShiftMenu.DropDownOpening += (s, e) => {
+                smartShiftStatus.Text = "正在读取...";
+                ThreadPool.QueueUserWorkItem(_ => {
+                    int mode, threshold;
+                    bool found = LogitechDeviceHelper.GetSmartShift(out mode, out threshold);
+                    try { this.BeginInvoke(new Action(() => markSmartShift(mode, threshold, found))); } catch { }
+                });
+            };
+            contextMenu.Items.Add(smartShiftMenu);
+
             autoStartMenuItem = new ToolStripMenuItem("开机自动启动", null, (s, e) => {
                 SetAutoStart(!IsAutoStartEnabled(), true);
                 autoStartMenuItem.Checked = IsAutoStartEnabled();
