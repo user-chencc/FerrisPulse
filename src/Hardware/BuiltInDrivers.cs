@@ -441,11 +441,27 @@ namespace RazerBatteryTray
 
             }
 
+            else if (nameLower.Contains("m750") || nameLower.Contains("signature"))
+
+            {
+
+                // Signature 办公系列: 0x2201 实测 M750 (046D:B02C 蓝牙直连) 400-4000 步进 100, 无 0x8060 回报率特性
+
+                maxDpi = 4000;
+
+                dev.Capabilities.MinDpi = 400;
+
+                dev.Capabilities.SupportsPollingRate = false;
+
+                sensorDesc = "罗技高精度光学传感器 (最高 4,000 DPI)";
+
+            }
+
             else if (nameLower.Contains("mx anywhere") || nameLower.Contains("mx master"))
 
             {
 
-                // MX 办公系列: 0x2201 实测 DPI 范围 200-8000 步进 50 (MX Anywhere 3S 蓝牙直连), 无 0x8060 回报率特性
+                // MX 办公系列: 0x2201 实测 MX Anywhere 3S 200-8000 步进 50 (蓝牙直连), 无 0x8060 回报率特性
 
                 maxDpi = 8000;
 

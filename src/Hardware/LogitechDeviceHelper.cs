@@ -512,6 +512,7 @@ public static class LogitechDeviceHelper
             case 0x4090: return "Logitech MX Master 3S";
             case 0x408F: return "Logitech MX Anywhere 3";
             case 0xB037: return "Logitech MX Anywhere 3S";
+            case 0xB02C: return "Logitech Signature M750";
             case 0x406B: return "Logitech MX Keys 无线键盘";
             case 0x408A: return "Logitech MX Keys Mini";
             case 0x4082: return "Logitech G913 TKL 机械键盘";

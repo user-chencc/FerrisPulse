@@ -9,7 +9,7 @@
 - 全屏游戏时自动停用（默认开启，可关闭），游戏内侧键保持原样；默认关闭，需用户手动启用。
 
 ### 🖱️ 罗技顶部按键 = Win+Tab（免 Logi Options+）
-- 新增 `LogitechButtonDiversionHelper`：通过 HID++ `0x1B04` 临时接管罗技鼠标顶部按键（CID `0x00C4`，如 MX Anywhere 3S 的滚轮模式键），按下即打开任务视图（Win+Tab）。
+- 新增 `LogitechButtonDiversionHelper`：通过 HID++ `0x1B04` 临时接管罗技鼠标顶部按键（CID `0x00C4`，如 MX Anywhere 3S 的滚轮模式键），按下即打开任务视图（Win+Tab）。蓝牙直连的 **Signature M750** 接管其顶部 DPI 键（CID `0x00FD`）；G 系列游戏鼠标的 DPI 键不受影响。
 - 鼠标断开、休眠唤醒、切换蓝牙主机回来后自动重新接管；停用或退出灵脉时把按键还给鼠标。托盘「鼠标按键映射」子菜单开关，默认关闭。
 
 ### 🖱️ 罗技蓝牙直连鼠标支持 DPI 调节

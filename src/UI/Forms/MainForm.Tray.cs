@@ -410,7 +410,7 @@ namespace RazerBatteryTray
             var sideMacroToggle = new ToolStripMenuItem("启用 (前侧键复制 · 后侧键粘贴)");
             var sideMacroSwap = new ToolStripMenuItem("对调 (前侧键粘贴 · 后侧键复制)");
             var sideMacroGame = new ToolStripMenuItem("侧键: 全屏游戏时自动停用");
-            var logiTopWinTab = new ToolStripMenuItem("罗技顶部按键 = Win+Tab (MX 系列)");
+            var logiTopWinTab = new ToolStripMenuItem("罗技顶部按键 = Win+Tab (MX / M750)");
             logiTopWinTab.Click += (s, e) => {
                 LogitechButtonDiversionHelper.SetEnabled(!LogitechButtonDiversionHelper.IsRunning);
                 logiTopWinTab.Checked = LogitechButtonDiversionHelper.IsRunning;

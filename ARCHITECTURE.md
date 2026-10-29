@@ -48,7 +48,7 @@ D:\FerrisPulse · 灵脉\
     │   ├── RapooDeviceHelper.cs [雷柏无线鼠标 HID 通信协议]
     │   ├── VgnDeviceHelper.cs   [VGN / 蜻蜓 / ATK 协议解析]
     │   ├── LogitechDeviceHelper.cs [罗技 HID++ 协议解析（含蓝牙直连 vid&02046d 路径）]
-    │   ├── LogitechButtonDiversionHelper.cs [罗技 HID++ 0x1B04 顶部按键 (CID 0x00C4) 接管 → Win+Tab]
+    │   ├── LogitechButtonDiversionHelper.cs [罗技 HID++ 0x1B04 顶部按键 (CID 0x00C4 / 蓝牙 0x00FD) 接管 → Win+Tab]
     │   ├── NuphyDeviceHelper.cs [NuPhy 键盘电量协议与侧灯控制]
     │   ├── ValkyrieDeviceHelper.cs [瓦尔基里全系键盘/鼠标私有 HID 协议、2.4G 接收器多模解析、8K 回报率与 DPI 调节]
     │   ├── FlydigiDeviceHelper.cs [飞智 APEX 6 / Vader 5 Pro GPA6 协议、0xFFA0 33B 帧、电量/充电解析]

@@ -3,7 +3,9 @@
 // 所属区域: Hardware (硬件驱动层)
 // 核心职责:
 //   罗技 HID++ 2.0 按键接管 (Feature 0x1B04 REPROG_CONTROLS_V4)：把鼠标顶部按键
-//   (CID 0x00C4, SmartShift/滚轮模式切换键) 临时 divert 给本程序，按下时注入 Win+Tab。
+//   (CID 0x00C4 SmartShift/滚轮模式切换键；或 CID 0x00FD DPI 切换键，仅蓝牙直连设备) 临时
+//   divert 给本程序，按下时注入 Win+Tab。0x00FD 只在蓝牙直连时接管：G 系列游戏鼠标经
+//   Lightspeed 接收器/USB 连接，它们的 DPI 键要留给游戏用。
 //   1. 后台扫描线程每 10 秒枚举 046D 长报文 HID++ 端点 (含蓝牙 "vid&02046d" 路径)，
 //      每个端点一个会话线程；蓝牙/有线直连 devIdx=0xFF，接收器 (PID C5xx) 探测 1..6
 //   2. 会话线程单线程收发：未匹配的应答一律当作事件分发，读缓冲/OVERLAPPED 均放在
@@ -11,11 +13,12 @@
 //   3. divert 是易失状态 (断开/休眠/切换蓝牙主机后丢失)，以下时机重新下发：
 //      0x1D4B 无线状态事件、鼠标静止 20 秒后再次移动 (NotifyMouseActivity)、每 60 秒兜底；
 //      曾接管成功的设备下发失败 (正在重连) 时改为每 5 秒重试
-//   4. 只接管 0x1B04 getCidInfo 标记可 divert (flags & 0x20) 的 0x00C4；没有该键的设备
-//      (如 G502 X) 不做任何改动
+//   4. 只接管 0x1B04 getCidInfo 标记可 divert (flags & 0x20) 的目标键 (优先 0x00C4)；
+//      没有目标键的设备 (如 G502 X) 不做任何改动
 //   5. 停用/退出时撤销 divert (flags=0x02)，顶部键恢复原厂功能
-//   协议实测 (MX Anywhere 3S 蓝牙, 046D:B037): HID++ 4.5, 0xFF43 / 20 字节端点,
-//   0x1B04 @0x0A, CID 0x00C4 flags=0x31 (可 divert)。
+//   协议实测 (蓝牙直连, HID++ 4.5, 0xFF43 / 20 字节端点):
+//   MX Anywhere 3S 046D:B037 0x1B04 @0x0A, CID 0x00C4 flags=0x31；
+//   Signature M750 046D:B02C 0x1B04 @0x09, CID 0x00FD flags=0x31 (无 0x00C4)。
 //   配置键 (HKCU\Software\FerrisPulse): LogiTopButtonWinTabEnabled (默认 0)
 //   软件 ID 固定 0x0B，与主轮询 (0x08) 区分，互不抢应答。
 // 依赖关系: LogitechDeviceHelper.cs (SetupAPI/HidD 声明与路径判定), SideButtonMacroService.cs (SendChord),
@@ -38,7 +41,8 @@ namespace RazerBatteryTray
     public static class LogitechButtonDiversionHelper
     {
         public const string EnabledKey = "LogiTopButtonWinTabEnabled";
-        public const ushort CidTopButton = 0x00C4;
+        public const ushort CidTopButton = 0x00C4;      // MX Anywhere 3S 等: SmartShift / 滚轮模式切换键
+        public const ushort CidDpiSwitchButton = 0x00FD; // Signature M750 等: 顶部 DPI 切换键 (实测 046D:B02C flags=0x31)
 
         private const byte SoftwareId = 0x0B;
         private const ushort VK_LWIN = 0x5B;
@@ -197,6 +201,7 @@ namespace RazerBatteryTray
             s.Path = path;
             s.InLen = caps.InputReportByteLength;
             s.OutLen = caps.OutputReportByteLength;
+            s.IsBluetooth = LogitechDeviceHelper.IsBluetoothHidPath(path);
             s.DevIndices = (pid >= 0xC500 && pid <= 0xC5FF)
                 ? new byte[] { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 }
                 : new byte[] { 0xFF };
@@ -233,6 +238,7 @@ namespace RazerBatteryTray
             public bool Unsupported;
             public byte ReprogIdx;
             public byte StatusIdx;
+            public ushort TargetCid;
             public bool Diverted;
             public bool EverDiverted;
             public bool Pressed;
@@ -244,6 +250,7 @@ namespace RazerBatteryTray
             public int InLen;
             public int OutLen;
             public byte[] DevIndices;
+            public bool IsBluetooth;
             public Thread Worker;
 
             private IntPtr handle = IntPtr.Zero;
@@ -311,7 +318,7 @@ namespace RazerBatteryTray
                     DevState st = devs[d];
                     if (st.Unsupported) continue;
                     bool ok = st.Probed || Probe(d, st);
-                    byte[] rx = ok ? Request(d, st.ReprogIdx, 3, new byte[] { (byte)(CidTopButton >> 8), (byte)CidTopButton, 0x03, 0x00, 0x00 }, 500) : null;
+                    byte[] rx = ok ? Request(d, st.ReprogIdx, 3, new byte[] { (byte)(st.TargetCid >> 8), (byte)st.TargetCid, 0x03, 0x00, 0x00 }, 500) : null;
                     st.Diverted = (rx != null);
                     if (rx != null)
                     {
@@ -341,15 +348,18 @@ namespace RazerBatteryTray
 
                 byte[] cnt = Request(d, st.ReprogIdx, 0, null, 400);
                 if (cnt == null) return false;
-                bool found = false;
+                ushort target = 0;
                 for (int i = 0; i < cnt[4] && i < 32; i++)
                 {
                     byte[] info = Request(d, st.ReprogIdx, 1, new byte[] { (byte)i }, 400);
                     if (info == null) return false;
                     int cid = (info[4] << 8) | info[5];
-                    if (cid == CidTopButton && (info[8] & 0x20) != 0) { found = true; break; }
+                    if ((info[8] & 0x20) == 0) continue; // 不可 divert
+                    if (cid == CidTopButton) { target = CidTopButton; break; }
+                    if (cid == CidDpiSwitchButton && IsBluetooth) target = CidDpiSwitchButton;
                 }
-                if (!found) { st.Unsupported = true; return false; }
+                if (target == 0) { st.Unsupported = true; return false; }
+                st.TargetCid = target;
                 st.Probed = true;
                 return true;
             }
@@ -361,7 +371,7 @@ namespace RazerBatteryTray
                 {
                     if (!kv.Value.Diverted) continue;
                     kv.Value.Diverted = false;
-                    Request(kv.Key, kv.Value.ReprogIdx, 3, new byte[] { (byte)(CidTopButton >> 8), (byte)CidTopButton, 0x02, 0x00, 0x00 }, 300);
+                    Request(kv.Key, kv.Value.ReprogIdx, 3, new byte[] { (byte)(kv.Value.TargetCid >> 8), (byte)kv.Value.TargetCid, 0x02, 0x00, 0x00 }, 300);
                 }
             }
 
@@ -379,7 +389,7 @@ namespace RazerBatteryTray
                     bool pressed = false;
                     for (int k = 4; k + 1 < rep.Length && k < 12; k += 2)
                     {
-                        if (((rep[k] << 8) | rep[k + 1]) == CidTopButton) pressed = true;
+                        if (((rep[k] << 8) | rep[k + 1]) == st.TargetCid) pressed = true;
                     }
                     if (pressed && !st.Pressed) OnTopButtonPressed();
                     st.Pressed = pressed;
