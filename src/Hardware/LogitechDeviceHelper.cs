@@ -5,6 +5,7 @@
 //   罗技 (Logitech) HID++ 1.0/2.0 私有协议通信、电量检测、DPI调节 (Feature 0x2201/0x2202 支持XY轴独立) 与回报率设置 (Feature 0x8060/0x8061 最高8000Hz) 实现
 //   另含 G PRO X Wireless 耳机 (046D:0ABA) 专属 HID++ 4.2 电量通道 (Feature 0x1F20 ADC_MEASUREMENT)
 //   蓝牙直连设备 (BLE 路径 "vid&02046d") 同样走 devIdx=0xFF 的 HID++ 2.0 通道 (IsLogitechHidPath / IsBluetoothHidPath)
+//   SmartShift 滚轮力度 (Feature 0x2111 / 0x2110，先读后写): GetSmartShift / SetSmartShiftAll
 // 依赖关系: NativeMethods.cs, MouseBatteryInfo.cs
 //
 // ⚠️ AI 维护准则 (AI MAINTENANCE DIRECTIVE - DO NOT REMOVE) ⚠️:
@@ -1626,6 +1627,133 @@ public static class LogitechDeviceHelper
                 }
 
                 return success;
+            }
+            finally
+            {
+                CloseHandle(hEvent);
+                CloseHandle(handle);
+            }
+        }
+    }
+
+    // ========================================================================
+    // SmartShift 滚轮"力度"：滚速超过阈值时，棘轮 (一格一格) 自动切换为自由滚动 (顺滑飞轮)
+    //   Feature 0x2111 SMART_SHIFT_ENHANCED: fn1 读 / fn2 写；Feature 0x2110 SMART_SHIFT: fn0 读 / fn1 写
+    //   载荷 [wheelMode, autoDisengage, 第 3 字节]: wheelMode 1=自由滚动 2=棘轮；autoDisengage 1..254
+    //   越小越容易切到自由滚动，255=永不自动切换。第 3 字节两版含义不同 (默认阈值 / 扭矩)，
+    //   一律"先读后写"原样回填，绝不自行构造。
+    //   实测特性表: MX Anywhere 3S (046D:B037) 有 0x2111；Signature M750 (046D:B02C) 两者皆无，滚轮不可调。
+    // ========================================================================
+    public const int SmartShiftNeverDisengage = 255;
+
+    /// <summary>读取第一只支持 SmartShift 的已连接罗技设备的当前状态；mode: 1=自由滚动 2=棘轮。</summary>
+    public static bool GetSmartShift(out int mode, out int threshold)
+    {
+        mode = 0;
+        threshold = 0;
+        List<LogitechEndpoint> eps = SnapshotEndpoints();
+        for (int i = 0; i < eps.Count; i++)
+        {
+            byte[] cur;
+            if (SmartShiftTransaction(eps[i], -1, -1, out cur))
+            {
+                mode = cur[0];
+                threshold = cur[1];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>对所有支持 SmartShift 的已连接罗技设备写入；mode 1=一直自由滚动，2=棘轮 + 阈值自动切换。返回成功写入的设备数。</summary>
+    public static int SetSmartShiftAll(int mode, int threshold)
+    {
+        int ok = 0;
+        List<LogitechEndpoint> eps = SnapshotEndpoints();
+        for (int i = 0; i < eps.Count; i++)
+        {
+            byte[] cur;
+            if (SmartShiftTransaction(eps[i], mode, threshold, out cur)) ok++;
+        }
+        return ok;
+    }
+
+    private static List<LogitechEndpoint> SnapshotEndpoints()
+    {
+        if (activeEndpoints.Count == 0) QueryAllLogitechDevices();
+        lock (hidLock)
+        {
+            return new List<LogitechEndpoint>(activeEndpoints.Values);
+        }
+    }
+
+    // newMode < 0 时只读不写；current 返回 [mode, autoDisengage, 第 3 字节] (写入成功时为写入后的值)
+    private static bool SmartShiftTransaction(LogitechEndpoint ep, int newMode, int newThreshold, out byte[] current)
+    {
+        current = null;
+        if (ep == null || string.IsNullOrEmpty(ep.DevicePath)) return false;
+        lock (hidLock)
+        {
+            IntPtr handle = CreateFile(ep.DevicePath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, IntPtr.Zero);
+            if (handle == IntPtr.Zero || handle.ToInt64() == -1) return false;
+            IntPtr hEvent = CreateEvent(IntPtr.Zero, true, false, null);
+            if (hEvent == IntPtr.Zero)
+            {
+                CloseHandle(handle);
+                return false;
+            }
+            try
+            {
+                int inLen = ep.InputReportLength > 0 ? ep.InputReportLength : 20;
+                int outLen = ep.OutputReportLength > 0 ? ep.OutputReportLength : 20;
+
+                byte featIdx = 0;
+                byte readFn = 0, writeFn = 0;
+                ushort[] candidates = new ushort[] { 0x2111, 0x2110 };
+                for (int c = 0; c < candidates.Length && featIdx == 0; c++)
+                {
+                    byte[] txFeat = new byte[20];
+                    txFeat[0] = 0x11;
+                    txFeat[1] = ep.DevIndex;
+                    txFeat[2] = 0x00;
+                    txFeat[3] = 0x08; // ROOT getFeature, swid 8
+                    txFeat[4] = (byte)(candidates[c] >> 8);
+                    txFeat[5] = (byte)(candidates[c] & 0xFF);
+                    byte[] rxFeat = SendAndReceive(handle, hEvent, txFeat, inLen, 300, outLen, ep.DevIndex, 0x00, 0x08);
+                    if (rxFeat != null && rxFeat.Length >= 5 && rxFeat[4] > 0)
+                    {
+                        featIdx = rxFeat[4];
+                        readFn = (byte)(candidates[c] == 0x2111 ? 1 : 0);
+                        writeFn = (byte)(candidates[c] == 0x2111 ? 2 : 1);
+                    }
+                }
+                if (featIdx == 0) return false;
+
+                byte[] txGet = new byte[20];
+                txGet[0] = 0x11;
+                txGet[1] = ep.DevIndex;
+                txGet[2] = featIdx;
+                txGet[3] = (byte)((readFn << 4) | 0x08);
+                byte[] rxGet = SendAndReceive(handle, hEvent, txGet, inLen, 300, outLen, ep.DevIndex, featIdx, 0x08);
+                if (rxGet == null || rxGet.Length < 7) return false;
+                // 防御: 读回的模式必须是 1 或 2，否则说明协议理解有误，宁可不写
+                if (rxGet[4] != 1 && rxGet[4] != 2) return false;
+                current = new byte[] { rxGet[4], rxGet[5], rxGet[6] };
+                if (newMode < 0) return true;
+
+                byte[] txSet = new byte[20];
+                txSet[0] = 0x11;
+                txSet[1] = ep.DevIndex;
+                txSet[2] = featIdx;
+                txSet[3] = (byte)((writeFn << 4) | 0x08);
+                txSet[4] = (byte)newMode;
+                txSet[5] = (byte)(newThreshold > 0 ? Math.Min(newThreshold, 255) : 0); // 0 = 保持原阈值
+                txSet[6] = rxGet[6];
+                byte[] rxSet = SendAndReceive(handle, hEvent, txSet, inLen, 300, outLen, ep.DevIndex, featIdx, 0x08);
+                if (rxSet == null) return false;
+                current = new byte[] { (byte)newMode, newThreshold > 0 ? (byte)Math.Min(newThreshold, 255) : rxGet[5], rxGet[6] };
+                return true;
             }
             finally
             {
