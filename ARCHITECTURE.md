@@ -132,7 +132,7 @@ D:\FerrisPulse · 灵脉\
 | **DPI 档位管理与 XY 轴比例调节** | `src/UI/Forms/DpiManagementDialog.cs` / `src/UI/Controls/DpiStageRowControl.cs` | DPI 档位增删、XY 轴独立调节 (4:3/16:10 比例联动) 与板载固化 |
 | **屏幕悬浮 OSD 指示器** | `src/UI/Forms/DpiOsdForm.cs` | 游戏前台免切焦点悬浮 HUD、DPI/XY独立双轴显示与回报率变动提示 |
 | **多设备优先级拖拽与首选设备** | `src/Hardware/DeviceManager.cs` / `DevicePriorityForm.cs` | 外设优先级权重与展示顺序；扫描时不删除暂时不在线的设备 ID，只在删除/隐藏设备时移除 |
-| **罗技滚轮力度 (SmartShift)** | `src/Hardware/LogitechDeviceHelper.cs` (GetSmartShift / SetSmartShiftAll) / `MainForm.Tray.cs` | 0x2111 / 0x2110 先读后写，托盘预设档位 |
+| **罗技滚轮力度 (SmartShift)** | `src/Hardware/LogitechDeviceHelper.cs` (GetSmartShift / SetSmartShiftAll) / `MainForm.Tray.cs` | 0x2111 / 0x2110 先读后写，托盘预设档位；0x2111 能力位 bit0 支持时可调每一格阻力 (GetSmartShiftState / SetSmartShiftTorqueAll) |
 | **罗技蓝牙鼠标 DPI 记忆 (重连自动写回)** | `src/Hardware/LogitechDeviceHelper.cs` (RememberUserDpi / TryGetRememberedUserDpi) / `MainForm.Hardware.cs` (ReapplyRememberedLogitechDpi) | 按设备 ID 记住用户选的 DPI，蓝牙鼠标每次重新连上时写回一次；游戏自动 DPI 生效时跳过。DPI 档位表也按设备 ID 保存 (GetDpiStageTable / SaveDpiStageTable，由 LogitechMouseDriver.UpdateHardwareStages 写入) |
 | **罗技顶部按键 → Win+Tab** | `src/Hardware/LogitechButtonDiversionHelper.cs` | 0x1B04 divert CID 0x00C4，断连/唤醒后自动重新下发 |
 | **鼠标侧键复制/粘贴映射** | `src/Services/SideButtonMacroService.cs` / `MainForm.Tray.cs` | 低级鼠标钩子吞掉前进/后退并注入 Ctrl+C/V，托盘子菜单开关 |

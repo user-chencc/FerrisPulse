@@ -1785,31 +1785,47 @@ public static class LogitechDeviceHelper
 
     // ========================================================================
     // SmartShift 滚轮"力度"：滚速超过阈值时，棘轮 (一格一格) 自动切换为自由滚动 (顺滑飞轮)
-    //   Feature 0x2111 SMART_SHIFT_ENHANCED: fn1 读 / fn2 写；Feature 0x2110 SMART_SHIFT: fn0 读 / fn1 写
-    //   载荷 [wheelMode, autoDisengage, 第 3 字节]: wheelMode 1=自由滚动 2=棘轮；autoDisengage 1..254
-    //   越小越容易切到自由滚动，255=永不自动切换。第 3 字节两版含义不同 (默认阈值 / 扭矩)，
-    //   一律"先读后写"原样回填，绝不自行构造。
+    //   Feature 0x2111 SMART_SHIFT_ENHANCED: fn0 能力 / fn1 读 / fn2 写；Feature 0x2110 SMART_SHIFT: fn0 读 / fn1 写
+    //   读写载荷 [wheelMode, autoDisengage, 第 3 字节]: wheelMode 1=自由滚动 2=棘轮；
+    //   autoDisengage 1..254 = 切换阈值 (单位 1/4 圈每秒，越小越容易切到自由滚动)，255=永不自动切换；写 0 = 不改。
+    //   第 3 字节: 0x2111 为「棘轮阻力」(tunable torque，1..100，即每一格拨动需要的力)，0x2110 为默认阈值。
+    //   棘轮阻力只有 fn0 能力字节 bit0 置位的型号才支持 (罗技目前只在 MX Master 4 等新款上开放 "Scroll force")；
+    //   不支持的型号一律"先读后写"原样回填第 3 字节，绝不自行构造。写阻力时要连同当前 wheelMode 一起写才会生效 (同 Solaar)。
     //   实测特性表: MX Anywhere 3S (046D:B037) 有 0x2111；Signature M750 (046D:B02C) 两者皆无，滚轮不可调。
     // ========================================================================
     public const int SmartShiftNeverDisengage = 255;
+
+    public class SmartShiftState
+    {
+        public int Mode;              // 1=自由滚动 2=棘轮
+        public int Threshold;         // 1..254，255=永不自动切换
+        public bool TorqueSupported;  // 是否支持调「每一格的阻力」
+        public int Torque;            // 当前阻力 1..100 (仅 TorqueSupported 时有意义)
+        public int DefaultTorque;     // 出厂默认阻力
+    }
 
     /// <summary>读取第一只支持 SmartShift 的已连接罗技设备的当前状态；mode: 1=自由滚动 2=棘轮。</summary>
     public static bool GetSmartShift(out int mode, out int threshold)
     {
         mode = 0;
         threshold = 0;
+        SmartShiftState st = GetSmartShiftState();
+        if (st == null) return false;
+        mode = st.Mode;
+        threshold = st.Threshold;
+        return true;
+    }
+
+    /// <summary>读取第一只支持 SmartShift 的已连接罗技设备的完整状态 (含棘轮阻力能力)；找不到返回 null。</summary>
+    public static SmartShiftState GetSmartShiftState()
+    {
         List<LogitechEndpoint> eps = SnapshotEndpoints();
         for (int i = 0; i < eps.Count; i++)
         {
-            byte[] cur;
-            if (SmartShiftTransaction(eps[i], -1, -1, out cur))
-            {
-                mode = cur[0];
-                threshold = cur[1];
-                return true;
-            }
+            SmartShiftState st;
+            if (SmartShiftTransaction(eps[i], -1, -1, -1, out st)) return st;
         }
-        return false;
+        return null;
     }
 
     /// <summary>对所有支持 SmartShift 的已连接罗技设备写入；mode 1=一直自由滚动，2=棘轮 + 阈值自动切换。返回成功写入的设备数。</summary>
@@ -1819,8 +1835,23 @@ public static class LogitechDeviceHelper
         List<LogitechEndpoint> eps = SnapshotEndpoints();
         for (int i = 0; i < eps.Count; i++)
         {
-            byte[] cur;
-            if (SmartShiftTransaction(eps[i], mode, threshold, out cur)) ok++;
+            SmartShiftState st;
+            if (SmartShiftTransaction(eps[i], mode, threshold, -1, out st)) ok++;
+        }
+        return ok;
+    }
+
+    /// <summary>对所有支持「棘轮阻力」的已连接罗技设备写入阻力 (1..100)。返回成功写入的设备数；不支持的设备不计入。</summary>
+    public static int SetSmartShiftTorqueAll(int torque)
+    {
+        if (torque < 1) torque = 1;
+        if (torque > 100) torque = 100;
+        int ok = 0;
+        List<LogitechEndpoint> eps = SnapshotEndpoints();
+        for (int i = 0; i < eps.Count; i++)
+        {
+            SmartShiftState st;
+            if (SmartShiftTransaction(eps[i], -1, -1, torque, out st) && st.TorqueSupported) ok++;
         }
         return ok;
     }
@@ -1834,10 +1865,11 @@ public static class LogitechDeviceHelper
         }
     }
 
-    // newMode < 0 时只读不写；current 返回 [mode, autoDisengage, 第 3 字节] (写入成功时为写入后的值)
-    private static bool SmartShiftTransaction(LogitechEndpoint ep, int newMode, int newThreshold, out byte[] current)
+    // newMode < 0 且 newTorque < 0 时只读不写；newTorque > 0 时只在设备支持棘轮阻力时写入。
+    // state 返回最新状态 (写入成功时为写入后的值)。
+    private static bool SmartShiftTransaction(LogitechEndpoint ep, int newMode, int newThreshold, int newTorque, out SmartShiftState state)
     {
-        current = null;
+        state = null;
         if (ep == null || string.IsNullOrEmpty(ep.DevicePath)) return false;
         lock (hidLock)
         {
@@ -1856,7 +1888,7 @@ public static class LogitechDeviceHelper
                 int outLen = ep.OutputReportLength > 0 ? ep.OutputReportLength : 20;
 
                 byte featIdx = 0;
-                byte readFn = 0, writeFn = 0;
+                bool enhanced = false;
                 ushort[] candidates = new ushort[] { 0x2111, 0x2110 };
                 for (int c = 0; c < candidates.Length && featIdx == 0; c++)
                 {
@@ -1871,11 +1903,30 @@ public static class LogitechDeviceHelper
                     if (rxFeat != null && rxFeat.Length >= 5 && rxFeat[4] > 0)
                     {
                         featIdx = rxFeat[4];
-                        readFn = (byte)(candidates[c] == 0x2111 ? 1 : 0);
-                        writeFn = (byte)(candidates[c] == 0x2111 ? 2 : 1);
+                        enhanced = (candidates[c] == 0x2111);
                     }
                 }
                 if (featIdx == 0) return false;
+                byte readFn = (byte)(enhanced ? 1 : 0);
+                byte writeFn = (byte)(enhanced ? 2 : 1);
+
+                // 0x2111 fn0 getCapabilities: [4]=能力位 (bit0 = 支持棘轮阻力) [5]=默认阈值 [6]=默认阻力 [7]=最大力
+                bool torqueSupported = false;
+                int defaultTorque = 0;
+                if (enhanced)
+                {
+                    byte[] txCap = new byte[20];
+                    txCap[0] = 0x11;
+                    txCap[1] = ep.DevIndex;
+                    txCap[2] = featIdx;
+                    txCap[3] = 0x08; // fn0
+                    byte[] rxCap = SendAndReceive(handle, hEvent, txCap, inLen, 300, outLen, ep.DevIndex, featIdx, 0x08);
+                    if (rxCap != null && rxCap.Length >= 7 && (rxCap[3] >> 4) == 0)
+                    {
+                        torqueSupported = (rxCap[4] & 0x01) != 0;
+                        defaultTorque = rxCap[6];
+                    }
+                }
 
                 byte[] txGet = new byte[20];
                 txGet[0] = 0x11;
@@ -1886,20 +1937,38 @@ public static class LogitechDeviceHelper
                 if (rxGet == null || rxGet.Length < 7) return false;
                 // 防御: 读回的模式必须是 1 或 2，否则说明协议理解有误，宁可不写
                 if (rxGet[4] != 1 && rxGet[4] != 2) return false;
-                current = new byte[] { rxGet[4], rxGet[5], rxGet[6] };
-                if (newMode < 0) return true;
+
+                state = new SmartShiftState
+                {
+                    Mode = rxGet[4],
+                    Threshold = rxGet[5],
+                    TorqueSupported = torqueSupported,
+                    Torque = torqueSupported ? rxGet[6] : 0,
+                    DefaultTorque = defaultTorque
+                };
+
+                bool writeMode = newMode > 0;
+                bool writeTorque = newTorque > 0 && torqueSupported;
+                if (!writeMode && !writeTorque) return true; // 只读，或设备不支持所请求的阻力调节
 
                 byte[] txSet = new byte[20];
                 txSet[0] = 0x11;
                 txSet[1] = ep.DevIndex;
                 txSet[2] = featIdx;
                 txSet[3] = (byte)((writeFn << 4) | 0x08);
-                txSet[4] = (byte)newMode;
-                txSet[5] = (byte)(newThreshold > 0 ? Math.Min(newThreshold, 255) : 0); // 0 = 保持原阈值
-                txSet[6] = rxGet[6];
+                // 只改阻力时也要带上当前模式，否则部分型号 (MX Master 4) 不生效；阈值写 0 = 保持不变
+                txSet[4] = (byte)(writeMode ? newMode : rxGet[4]);
+                txSet[5] = (byte)(writeMode && newThreshold > 0 ? Math.Min(newThreshold, 255) : 0);
+                txSet[6] = writeTorque ? (byte)Math.Min(newTorque, 100) : rxGet[6];
                 byte[] rxSet = SendAndReceive(handle, hEvent, txSet, inLen, 300, outLen, ep.DevIndex, featIdx, 0x08);
                 if (rxSet == null) return false;
-                current = new byte[] { (byte)newMode, newThreshold > 0 ? (byte)Math.Min(newThreshold, 255) : rxGet[5], rxGet[6] };
+
+                if (writeMode)
+                {
+                    state.Mode = newMode;
+                    if (newThreshold > 0) state.Threshold = Math.Min(newThreshold, 255);
+                }
+                if (writeTorque) state.Torque = Math.Min(newTorque, 100);
                 return true;
             }
             finally
