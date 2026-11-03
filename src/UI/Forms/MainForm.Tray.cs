@@ -439,47 +439,85 @@ namespace RazerBatteryTray
             sideMacroMenu.DropDownItems.AddRange(new ToolStripItem[] { sideMacroToggle, sideMacroSwap, sideMacroGame, new ToolStripSeparator(), logiTopWinTab });
             contextMenu.Items.Add(sideMacroMenu);
 
-            // 罗技滚轮力度 (SmartShift)：滚速超过阈值时一格一格的棘轮自动切换为顺滑滚动；值越小越容易切换
+            // 罗技滚轮力度 (SmartShift)，两个独立设置：
+            //   1) 切换灵敏度：滚速超过阈值时一格一格的棘轮自动切换为顺滑滚动；阈值越小越容易切换 (单位 1/4 圈每秒)
+            //   2) 每一格的阻力 (棘轮扭矩)：拨过每一格需要的力，只有鼠标支持时才显示 (罗技目前只在 MX Master 4 等新款开放)
             var smartShiftMenu = new ToolStripMenuItem("罗技滚轮力度 (SmartShift)");
             ConfigureSubMenuDropDown(smartShiftMenu.DropDown);
             var smartShiftStatus = new ToolStripMenuItem("正在读取...");
             smartShiftStatus.Enabled = false;
             smartShiftMenu.DropDownItems.Add(smartShiftStatus);
             smartShiftMenu.DropDownItems.Add(new ToolStripSeparator());
-            // Tag = int[] { mode, threshold }；mode 1 = 一直顺滑滚动，2 = 棘轮 + 阈值自动切换 (255 = 永不切换)
-            string[] ssLabels = new string[] { "很灵敏 (轻轻一拨就顺滑)", "适中", "需要用力拨才顺滑", "一直一格一格 (关闭自动切换)", "一直顺滑滚动" };
-            int[][] ssValues = new int[][] { new int[] { 2, 5 }, new int[] { 2, 15 }, new int[] { 2, 30 }, new int[] { 2, LogitechDeviceHelper.SmartShiftNeverDisengage }, new int[] { 1, 0 } };
-            Action<int, int, bool> markSmartShift = (mode, threshold, found) => {
+            var ssShiftTitle = new ToolStripMenuItem("一格一格 → 顺滑 的切换灵敏度：");
+            ssShiftTitle.Enabled = false;
+            smartShiftMenu.DropDownItems.Add(ssShiftTitle);
+            // { mode, threshold }；mode 1 = 一直顺滑滚动，2 = 棘轮 + 阈值自动切换 (255 = 永不切换)
+            string[] ssLabels = new string[] {
+                "1 最灵敏 (轻轻一拨就顺滑)", "2 很灵敏", "3 灵敏", "4 适中", "5 需要用力拨", "6 需要很用力拨",
+                "一直一格一格 (关闭自动切换)", "一直顺滑滚动" };
+            int[][] ssValues = new int[][] {
+                new int[] { 2, 3 }, new int[] { 2, 6 }, new int[] { 2, 10 }, new int[] { 2, 15 }, new int[] { 2, 22 }, new int[] { 2, 32 },
+                new int[] { 2, LogitechDeviceHelper.SmartShiftNeverDisengage }, new int[] { 1, 0 } };
+            int ssThresholdPresetCount = 6;
+            var ssShiftItems = new List<ToolStripMenuItem>();
+
+            var ssTorqueSep = new ToolStripSeparator();
+            var ssTorqueTitle = new ToolStripMenuItem("每一格的阻力 (拨动手感)：");
+            ssTorqueTitle.Enabled = false;
+            var ssTorqueUnsupported = new ToolStripMenuItem("这只鼠标不支持调每一格的阻力");
+            ssTorqueUnsupported.Enabled = false;
+            string[] torqueLabels = new string[] { "很轻", "轻", "中", "重", "很重", "最重" };
+            int[] torqueValues = new int[] { 15, 30, 50, 65, 80, 100 };
+            var ssTorqueItems = new List<ToolStripMenuItem>();
+
+            Action<LogitechDeviceHelper.SmartShiftState> markSmartShift = (st) => {
                 int best = -1;
-                if (found)
+                if (st != null)
                 {
-                    if (mode == 1) best = 4;
-                    else if (threshold >= LogitechDeviceHelper.SmartShiftNeverDisengage) best = 3;
+                    if (st.Mode == 1) best = ssValues.Length - 1;
+                    else if (st.Threshold >= LogitechDeviceHelper.SmartShiftNeverDisengage) best = ssValues.Length - 2;
                     else
                     {
                         int bestDiff = int.MaxValue;
-                        for (int k = 0; k < 3; k++)
+                        for (int k = 0; k < ssThresholdPresetCount; k++)
                         {
-                            int diff = Math.Abs(ssValues[k][1] - threshold);
+                            int diff = Math.Abs(ssValues[k][1] - st.Threshold);
                             if (diff < bestDiff) { bestDiff = diff; best = k; }
                         }
                     }
-                    smartShiftStatus.Text = (mode == 1) ? "当前: 一直顺滑滚动"
-                        : (threshold >= LogitechDeviceHelper.SmartShiftNeverDisengage ? "当前: 一直一格一格" : string.Format("当前切换阈值: {0} (越小越灵敏)", threshold));
+                    string modeText = (st.Mode == 1) ? "一直顺滑滚动"
+                        : (st.Threshold >= LogitechDeviceHelper.SmartShiftNeverDisengage ? "一直一格一格" : string.Format("切换阈值 {0} (越小越灵敏)", st.Threshold));
+                    smartShiftStatus.Text = st.TorqueSupported
+                        ? string.Format("当前: {0}，每一格阻力 {1}", modeText, st.Torque)
+                        : "当前: " + modeText;
                 }
                 else
                 {
                     smartShiftStatus.Text = "未找到支持的罗技鼠标 (动一下鼠标再打开)";
                 }
-                int idx = 0;
-                foreach (ToolStripItem it in smartShiftMenu.DropDownItems)
+                for (int k = 0; k < ssShiftItems.Count; k++) ssShiftItems[k].Checked = (k == best);
+
+                bool torqueOk = st != null && st.TorqueSupported;
+                ssTorqueSep.Visible = st != null;
+                ssTorqueTitle.Visible = st != null;
+                ssTorqueUnsupported.Visible = st != null && !torqueOk;
+                int bestTorque = -1;
+                if (torqueOk)
                 {
-                    ToolStripMenuItem mi = it as ToolStripMenuItem;
-                    if (mi == null || mi == smartShiftStatus) continue;
-                    mi.Checked = (idx == best);
-                    idx++;
+                    int bestDiff = int.MaxValue;
+                    for (int k = 0; k < torqueValues.Length; k++)
+                    {
+                        int diff = Math.Abs(torqueValues[k] - st.Torque);
+                        if (diff < bestDiff) { bestDiff = diff; bestTorque = k; }
+                    }
+                }
+                for (int k = 0; k < ssTorqueItems.Count; k++)
+                {
+                    ssTorqueItems[k].Visible = torqueOk;
+                    ssTorqueItems[k].Checked = (k == bestTorque);
                 }
             };
+
             for (int i = 0; i < ssLabels.Length; i++)
             {
                 var mi = new ToolStripMenuItem(ssLabels[i]);
@@ -488,24 +526,56 @@ namespace RazerBatteryTray
                     int[] v = (int[])((ToolStripMenuItem)s).Tag;
                     ThreadPool.QueueUserWorkItem(_ => {
                         int n = LogitechDeviceHelper.SetSmartShiftAll(v[0], v[1]);
+                        LogitechDeviceHelper.SmartShiftState st = (n > 0) ? LogitechDeviceHelper.GetSmartShiftState() : null;
                         try
                         {
                             this.BeginInvoke(new Action(() => {
-                                if (n > 0) markSmartShift(v[0], v[1], true);
+                                if (n > 0) markSmartShift(st);
                                 else SafeShowBalloonTip(3000, "FerrisPulse · 罗技滚轮力度", "没有找到支持滚轮力度调节的罗技鼠标。请动一下鼠标让它醒来再试 (M750 等型号的滚轮不支持调节)。", ToolTipIcon.Warning);
                             }));
                         }
                         catch { }
                     });
                 };
+                ssShiftItems.Add(mi);
                 smartShiftMenu.DropDownItems.Add(mi);
             }
+
+            smartShiftMenu.DropDownItems.Add(ssTorqueSep);
+            smartShiftMenu.DropDownItems.Add(ssTorqueTitle);
+            smartShiftMenu.DropDownItems.Add(ssTorqueUnsupported);
+            for (int i = 0; i < torqueLabels.Length; i++)
+            {
+                var mi = new ToolStripMenuItem(torqueLabels[i]);
+                mi.Tag = torqueValues[i];
+                mi.Visible = false;
+                mi.Click += (s, e) => {
+                    int torque = (int)((ToolStripMenuItem)s).Tag;
+                    ThreadPool.QueueUserWorkItem(_ => {
+                        int n = LogitechDeviceHelper.SetSmartShiftTorqueAll(torque);
+                        LogitechDeviceHelper.SmartShiftState st = LogitechDeviceHelper.GetSmartShiftState();
+                        try
+                        {
+                            this.BeginInvoke(new Action(() => {
+                                markSmartShift(st);
+                                if (n <= 0) SafeShowBalloonTip(3000, "FerrisPulse · 罗技滚轮力度", "这只鼠标不支持调每一格的阻力，只能调「一格一格 → 顺滑」的切换灵敏度。", ToolTipIcon.Warning);
+                            }));
+                        }
+                        catch { }
+                    });
+                };
+                ssTorqueItems.Add(mi);
+                smartShiftMenu.DropDownItems.Add(mi);
+            }
+            ssTorqueSep.Visible = false;
+            ssTorqueTitle.Visible = false;
+            ssTorqueUnsupported.Visible = false;
+
             smartShiftMenu.DropDownOpening += (s, e) => {
                 smartShiftStatus.Text = "正在读取...";
                 ThreadPool.QueueUserWorkItem(_ => {
-                    int mode, threshold;
-                    bool found = LogitechDeviceHelper.GetSmartShift(out mode, out threshold);
-                    try { this.BeginInvoke(new Action(() => markSmartShift(mode, threshold, found))); } catch { }
+                    LogitechDeviceHelper.SmartShiftState st = LogitechDeviceHelper.GetSmartShiftState();
+                    try { this.BeginInvoke(new Action(() => markSmartShift(st))); } catch { }
                 });
             };
             contextMenu.Items.Add(smartShiftMenu);
