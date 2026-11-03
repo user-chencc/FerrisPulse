@@ -1491,6 +1491,7 @@ namespace RazerBatteryTray
             if (index < 0 || index >= dpiStageList.Count) return;
             int targetStage = index + 1;
             int targetDpi = dpiStageList[index];
+            RememberUserDpiChoice(selectedDevice, targetDpi, targetDpi);
 
             if (isGamingActive && autoGameDpiEnabled)
             {
@@ -2077,6 +2078,8 @@ namespace RazerBatteryTray
                     OnDpiChanged(devBrand, activeDpiX, activeStage, newStagesX.Length, targetDevId, activeDpiY);
                     UpdatePerformanceSection(curDev, curDev.BrandColor);
                     UpdateStatusDisplay();
+
+                    RememberUserDpiChoice(curDev, activeDpiX, activeDpiY);
 
                     // 3. Persist to hardware in background thread via unified HardwareCommandBus
                     new Thread(() => {

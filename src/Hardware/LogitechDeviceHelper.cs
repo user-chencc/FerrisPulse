@@ -349,6 +349,54 @@ public static class LogitechDeviceHelper
         catch { }
     }
 
+    // ------------------------------------------------------------------------
+    // 每只罗技鼠标「用户自己选的 DPI」(按设备 ID 分别记住)
+    // MX Anywhere / M750 这类办公鼠标通过 0x2201 写入的 DPI 不会存进鼠标：
+    // 蓝牙断开重连 (开机、睡眠唤醒、在 Mac 和 Windows 间切换) 后鼠标会回到出厂默认 DPI。
+    // 罗技官方软件是靠每次连上时重新写一遍来"记住"的，这里存下用户的选择，供重连时写回。
+    // 值格式: "X,Y"，值名为设备 ID (例如 Logitech:046D:B037)
+    // ------------------------------------------------------------------------
+    private const string UserDpiRegistryKey = CacheRegistryKey + @"\UserDpi";
+
+    public static void RememberUserDpi(string deviceId, int dpiX, int dpiY)
+    {
+        if (string.IsNullOrEmpty(deviceId) || dpiX < 50 || dpiX > 50000) return;
+        if (dpiY < 50 || dpiY > 50000) dpiY = dpiX;
+        try
+        {
+            using (var key = Registry.CurrentUser.CreateSubKey(UserDpiRegistryKey))
+            {
+                if (key != null) key.SetValue(deviceId, dpiX + "," + dpiY);
+            }
+        }
+        catch { }
+    }
+
+    public static bool TryGetRememberedUserDpi(string deviceId, out int dpiX, out int dpiY)
+    {
+        dpiX = 0;
+        dpiY = 0;
+        if (string.IsNullOrEmpty(deviceId)) return false;
+        try
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(UserDpiRegistryKey, false))
+            {
+                if (key == null) return false;
+                string raw = key.GetValue(deviceId) as string;
+                if (string.IsNullOrEmpty(raw)) return false;
+                string[] parts = raw.Split(',');
+                int x, y;
+                if (!int.TryParse(parts[0].Trim(), out x) || x < 50 || x > 50000) return false;
+                if (parts.Length < 2 || !int.TryParse(parts[1].Trim(), out y) || y < 50 || y > 50000) y = x;
+                dpiX = x;
+                dpiY = y;
+                return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
     // 严格按设备 ID 隔离的缓存查询。
     // 历史缺陷：旧实现会在未命中本设备缓存时回退到全局 CachedBatteryPercent，
     // 导致同一接收器 / 同一枚举轮次下的其它外设（如 Yeti Nano 麦克风）继承鼠标电量。
