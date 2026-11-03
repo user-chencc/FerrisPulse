@@ -404,6 +404,7 @@ namespace RazerBatteryTray
         {
             var curDev = selectedDevice ?? GetActiveMouseDevice();
             if (curDev == null) return;
+            RememberUserDpiChoice(curDev, dpi, dpi);
 
             int targetStage = -1;
             for (int i = 0; i < dpiStageValues.Length; i++)
@@ -887,6 +888,116 @@ namespace RazerBatteryTray
             }
 
             return isGame;
+        }
+
+        // ====================================================================
+        // 罗技蓝牙鼠标 DPI 记忆：MX Anywhere / M750 这类鼠标不会把软件写入的 DPI 存进鼠标，
+        // 每次蓝牙重连 (开机 / 唤醒 / Mac↔Win 切换) 都会回到出厂默认 (MX Anywhere 3S 为 1000，界面上显示成最接近的 800 档)。
+        // 做法与罗技官方软件一致：记住用户选的 DPI，鼠标每次重新连上时写回一次。
+        // 只针对蓝牙直连的罗技鼠标；G 系列走接收器、有板载档位和 DPI 键，交给鼠标自己管，避免覆盖 DPI 键的选择。
+        // ====================================================================
+        private readonly Dictionary<string, bool> logiDpiRestoredWhileOnline = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, int> logiDpiRestoreFailures = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        private static bool IsVolatileDpiLogitechMouse(MouseBatteryInfo dev)
+        {
+            return dev != null &&
+                   !string.IsNullOrEmpty(dev.DeviceId) &&
+                   dev.Category == DeviceCategory.Mouse &&
+                   string.Equals(dev.Brand, "Logitech", StringComparison.OrdinalIgnoreCase) &&
+                   dev.Transport != null && dev.Transport.IndexOf("蓝牙", StringComparison.Ordinal) >= 0;
+        }
+
+        private void RememberUserDpiChoice(MouseBatteryInfo dev, int dpiX, int dpiY)
+        {
+            if (!IsVolatileDpiLogitechMouse(dev)) return;
+            LogitechDeviceHelper.RememberUserDpi(dev.DeviceId, dpiX, dpiY > 0 ? dpiY : dpiX);
+            // 用户刚刚亲手写过，本次在线期间无需再写回
+            logiDpiRestoredWhileOnline[dev.DeviceId] = true;
+            logiDpiRestoreFailures.Remove(dev.DeviceId);
+        }
+
+        private void ReapplyRememberedLogitechDpi(List<MouseBatteryInfo> devices)
+        {
+            var onlineIds = new List<string>();
+            if (devices != null)
+            {
+                foreach (var d in devices)
+                {
+                    if (IsVolatileDpiLogitechMouse(d) && d.IsConnected && !d.IsSleeping) onlineIds.Add(d.DeviceId);
+                }
+            }
+
+            // 已断开的鼠标：忘掉"本次已写回"，下次连上时重新写
+            var stale = new List<string>();
+            foreach (var id in logiDpiRestoredWhileOnline.Keys)
+            {
+                if (DeviceManager.IndexOfIgnoreCase(onlineIds, id) < 0) stale.Add(id);
+            }
+            foreach (var id in stale)
+            {
+                logiDpiRestoredWhileOnline.Remove(id);
+                logiDpiRestoreFailures.Remove(id);
+            }
+
+            // 游戏中由「游戏自动 DPI」接管，退出游戏后再写回
+            if (isGamingActive && autoGameDpiEnabled) return;
+
+            foreach (var d in devices ?? new List<MouseBatteryInfo>())
+            {
+                if (!IsVolatileDpiLogitechMouse(d) || !d.IsConnected || d.IsSleeping) continue;
+                if (logiDpiRestoredWhileOnline.ContainsKey(d.DeviceId)) continue;
+
+                int wantX, wantY;
+                if (!LogitechDeviceHelper.TryGetRememberedUserDpi(d.DeviceId, out wantX, out wantY)) continue;
+
+                logiDpiRestoredWhileOnline[d.DeviceId] = true;
+                var dev = d;
+                string devId = d.DeviceId;
+                int wantStage = LogitechDeviceHelper.MatchDpiStage(wantX, (d.DpiStages != null && d.DpiStages.Length > 0) ? d.DpiStages : dpiStageValues);
+
+                new Thread(() => {
+                    // 蓝牙刚连上时先让链路和按键接管 (0x1B04) 完成，再写 DPI
+                    Thread.Sleep(1500);
+                    bool ok = false;
+                    for (int attempt = 0; attempt < 3 && !ok; attempt++)
+                    {
+                        if (attempt > 0) Thread.Sleep(600);
+                        try { ok = HardwareCommandBus.SetDpi(dev, wantX, wantY, wantStage); } catch { ok = false; }
+                    }
+
+                    try
+                    {
+                        this.BeginInvoke(new Action(() => {
+                            if (!ok)
+                            {
+                                // 写失败：允许后续扫描再试，最多 3 轮，避免一直重试
+                                int fails;
+                                logiDpiRestoreFailures.TryGetValue(devId, out fails);
+                                fails++;
+                                logiDpiRestoreFailures[devId] = fails;
+                                if (fails < 3) logiDpiRestoredWhileOnline.Remove(devId);
+                                return;
+                            }
+
+                            logiDpiRestoreFailures.Remove(devId);
+                            dev.Dpi = wantX;
+                            dev.DpiY = wantY;
+                            dev.DpiStage = wantStage;
+                            if (selectedDevice != null && string.Equals(selectedDevice.DeviceId, devId, StringComparison.OrdinalIgnoreCase))
+                            {
+                                selectedDevice.Dpi = wantX;
+                                selectedDevice.DpiY = wantY;
+                                selectedDevice.DpiStage = wantStage;
+                                HighlightDpiStage(wantStage);
+                                UpdatePollingRateDisplayStates();
+                            }
+                            UpdateStatusDisplay();
+                        }));
+                    }
+                    catch { }
+                }) { IsBackground = true }.Start();
+            }
         }
 
         private void PerformStartupDesktopCalibration(MouseBatteryInfo dev)
@@ -1721,9 +1832,11 @@ namespace RazerBatteryTray
                 {
                     PerformStartupDesktopCalibration(selectedDevice);
                 }
+                ReapplyRememberedLogitechDpi(devices);
             }
             else
             {
+                ReapplyRememberedLogitechDpi(null);
                 selectedDevice = null;
                 lastInfo = null;
                 UpdateDeviceTabsUI();

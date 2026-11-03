@@ -183,7 +183,8 @@ namespace RazerBatteryTray
                     bool chg = false;
                     for (int i = 0; i < variants.Count; i++)
                     {
-                        if (prio.Remove(variants[i])) chg = true;
+                        string v = variants[i];
+                        if (prio.RemoveAll(x => string.Equals(x, v, StringComparison.OrdinalIgnoreCase)) > 0) chg = true;
                     }
                     if (chg) SavePriorityList(prio);
                 }
@@ -291,7 +292,7 @@ namespace RazerBatteryTray
                             foreach (var p in parts)
                             {
                                 string trimmed = p.Trim();
-                                if (!string.IsNullOrEmpty(trimmed) && !list.Contains(trimmed))
+                                if (!string.IsNullOrEmpty(trimmed) && IndexOfIgnoreCase(list, trimmed) < 0)
                                 {
                                     list.Add(trimmed);
                                 }
@@ -302,6 +303,37 @@ namespace RazerBatteryTray
             }
             catch { }
             return list;
+        }
+
+        // 排序里最多保留的设备 ID 条数 (含当前不在线的设备)
+        private const int MaxPriorityEntries = 64;
+
+        public static int IndexOfIgnoreCase(List<string> items, string value)
+        {
+            if (items == null || value == null) return -1;
+            for (int i = 0; i < items.Count; i++)
+            {
+                if (string.Equals(items[i], value, StringComparison.OrdinalIgnoreCase)) return i;
+            }
+            return -1;
+        }
+
+        // 保存「优先级管理」对话框里的新顺序。
+        // 对话框只列出当前能看到的设备；暂时不在线 (例如连在 Mac 上) 的设备 ID 保留在末尾，
+        // 不然它下次连上时会被当成新设备排到最后。
+        public static void SaveUserPriorityOrder(List<string> orderedIds)
+        {
+            if (orderedIds == null) return;
+            var merged = new List<string>();
+            foreach (var id in orderedIds)
+            {
+                if (!string.IsNullOrEmpty(id) && IndexOfIgnoreCase(merged, id) < 0) merged.Add(id);
+            }
+            foreach (var old in GetPriorityList())
+            {
+                if (IndexOfIgnoreCase(merged, old) < 0) merged.Add(old);
+            }
+            SavePriorityList(merged);
         }
 
         public static void SavePriorityList(List<string> priorityList)
@@ -424,7 +456,7 @@ namespace RazerBatteryTray
             try
             {
                 var prio = GetPriorityList();
-                if (prio != null && prio.Remove(deviceId))
+                if (prio != null && prio.RemoveAll(x => string.Equals(x, deviceId, StringComparison.OrdinalIgnoreCase)) > 0)
                 {
                     SavePriorityList(prio);
                 }
@@ -2125,29 +2157,35 @@ namespace RazerBatteryTray
             list.RemoveAll(d => ShouldHideDevice(d, IsDeviceHidden(d.DeviceId), !string.IsNullOrEmpty(d.HardwareFingerprint) && IsDeviceHidden(d.HardwareFingerprint)));
 
             // 4. Priority Ordering and Primary Selection
+            // 注意：这里绝不能把「本次扫描没出现的设备」从排序里删掉。
+            // 开机头几次扫描时蓝牙鼠标往往还没连上 (或正连在另一台电脑上)，
+            // 以前会被当成"已失效"删掉，等它连上后又被追加到末尾 —— 用户排好的顺序因此每次重启都被打回原样。
+            // 只有用户在界面里删除 / 隐藏设备时才从排序里移除 (见 HideOrDeleteDevice / DeleteCustomDevice)。
             var prioList = GetPriorityList();
             bool prioChanged = false;
 
-            var validIds = new List<string>();
-            foreach (var d in list) validIds.Add(d.DeviceId);
-
-            for (int i = prioList.Count - 1; i >= 0; i--)
+            var presentIds = new List<string>();
+            foreach (var d in list)
             {
-                if (!validIds.Contains(prioList[i]))
+                if (string.IsNullOrEmpty(d.DeviceId)) continue;
+                presentIds.Add(d.DeviceId);
+                if (IndexOfIgnoreCase(prioList, d.DeviceId) < 0)
+                {
+                    prioList.Add(d.DeviceId);
+                    prioChanged = true;
+                }
+            }
+
+            // 防止历史 ID 无限增长：超出上限时，从末尾开始丢弃当前不在线的旧条目
+            for (int i = prioList.Count - 1; i >= 0 && prioList.Count > MaxPriorityEntries; i--)
+            {
+                if (IndexOfIgnoreCase(presentIds, prioList[i]) < 0)
                 {
                     prioList.RemoveAt(i);
                     prioChanged = true;
                 }
             }
 
-            foreach (var d in list)
-            {
-                if (!prioList.Contains(d.DeviceId))
-                {
-                    prioList.Add(d.DeviceId);
-                    prioChanged = true;
-                }
-            }
             if (prioChanged)
             {
                 SavePriorityList(prioList);
@@ -2155,8 +2193,8 @@ namespace RazerBatteryTray
 
             list.Sort((a, b) =>
             {
-                int ia = prioList.IndexOf(a.DeviceId);
-                int ib = prioList.IndexOf(b.DeviceId);
+                int ia = IndexOfIgnoreCase(prioList, a.DeviceId);
+                int ib = IndexOfIgnoreCase(prioList, b.DeviceId);
                 if (ia < 0) ia = 9999;
                 if (ib < 0) ib = 9999;
                 return ia.CompareTo(ib);

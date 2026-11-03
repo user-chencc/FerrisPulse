@@ -991,6 +991,9 @@ namespace RazerBatteryTray
                             {
                                 this.BeginInvoke(new Action(() => {
                                     calibratedStartupDevices.Clear();
+                                    // 唤醒后蓝牙鼠标可能已重连并回到默认 DPI，下次刷新时重新写回用户选的 DPI
+                                    logiDpiRestoredWhileOnline.Clear();
+                                    logiDpiRestoreFailures.Clear();
                                     if (selectedDevice != null) PerformStartupDesktopCalibration(selectedDevice);
                                 }));
                             }

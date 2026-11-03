@@ -349,6 +349,152 @@ public static class LogitechDeviceHelper
         catch { }
     }
 
+    // ------------------------------------------------------------------------
+    // 每只罗技鼠标「用户自己选的 DPI」(按设备 ID 分别记住)
+    // MX Anywhere / M750 这类办公鼠标通过 0x2201 写入的 DPI 不会存进鼠标：
+    // 蓝牙断开重连 (开机、睡眠唤醒、在 Mac 和 Windows 间切换) 后鼠标会回到出厂默认 DPI。
+    // 罗技官方软件是靠每次连上时重新写一遍来"记住"的，这里存下用户的选择，供重连时写回。
+    // 值格式: "X,Y"，值名为设备 ID (例如 Logitech:046D:B037)
+    // ------------------------------------------------------------------------
+    private const string UserDpiRegistryKey = CacheRegistryKey + @"\UserDpi";
+
+    public static void RememberUserDpi(string deviceId, int dpiX, int dpiY)
+    {
+        if (string.IsNullOrEmpty(deviceId) || dpiX < 50 || dpiX > 50000) return;
+        if (dpiY < 50 || dpiY > 50000) dpiY = dpiX;
+        try
+        {
+            using (var key = Registry.CurrentUser.CreateSubKey(UserDpiRegistryKey))
+            {
+                if (key != null) key.SetValue(deviceId, dpiX + "," + dpiY);
+            }
+        }
+        catch { }
+    }
+
+    public static bool TryGetRememberedUserDpi(string deviceId, out int dpiX, out int dpiY)
+    {
+        dpiX = 0;
+        dpiY = 0;
+        if (string.IsNullOrEmpty(deviceId)) return false;
+        try
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(UserDpiRegistryKey, false))
+            {
+                if (key == null) return false;
+                string raw = key.GetValue(deviceId) as string;
+                if (string.IsNullOrEmpty(raw)) return false;
+                string[] parts = raw.Split(',');
+                int x, y;
+                if (!int.TryParse(parts[0].Trim(), out x) || x < 50 || x > 50000) return false;
+                if (parts.Length < 2 || !int.TryParse(parts[1].Trim(), out y) || y < 50 || y > 50000) y = x;
+                dpiX = x;
+                dpiY = y;
+                return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    // ------------------------------------------------------------------------
+    // 每只罗技鼠标自己的 DPI 档位表
+    // 罗技办公鼠标 (MX Anywhere / M750 等) 没有板载档位，鼠标里只有"当前 DPI"这一个值。
+    // 以前档位表写死为 400/800/1600/3200/6400，用户在「DPI 档位与板载设置」里改成 1800 后，
+    // 每次刷新又被这张固定表盖掉。现在把用户编辑过的档位表按设备 ID 存在注册表里，充当它的"板载档位"。
+    // 值格式: "400,800,1800,3200,6400"；Y 轴档位存在值名 "<设备ID>|Y"。
+    // ------------------------------------------------------------------------
+    private const string StageTableRegistryKey = CacheRegistryKey + @"\DpiStages";
+
+    public static int[] DefaultDpiStageTable()
+    {
+        return new int[] { 400, 800, 1600, 3200, 6400 };
+    }
+
+    private static int[] ParseStageTable(string raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return null;
+        var vals = new List<int>();
+        foreach (var part in raw.Split(','))
+        {
+            int v;
+            if (!int.TryParse(part.Trim(), out v) || v < 50 || v > 50000) return null;
+            vals.Add(v);
+        }
+        if (vals.Count < 1 || vals.Count > 5) return null;
+        return vals.ToArray();
+    }
+
+    private static string FormatStageTable(int[] stages)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < stages.Length; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append(stages[i]);
+        }
+        return sb.ToString();
+    }
+
+    public static int[] GetDpiStageTable(string deviceId)
+    {
+        if (!string.IsNullOrEmpty(deviceId))
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(StageTableRegistryKey, false))
+                {
+                    if (key != null)
+                    {
+                        int[] t = ParseStageTable(key.GetValue(deviceId) as string);
+                        if (t != null) return t;
+                    }
+                }
+            }
+            catch { }
+        }
+        return DefaultDpiStageTable();
+    }
+
+    public static int[] GetDpiStageTableY(string deviceId, int[] stagesX)
+    {
+        if (!string.IsNullOrEmpty(deviceId) && stagesX != null)
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(StageTableRegistryKey, false))
+                {
+                    if (key != null)
+                    {
+                        int[] t = ParseStageTable(key.GetValue(deviceId + "|Y") as string);
+                        if (t != null && t.Length == stagesX.Length) return t;
+                    }
+                }
+            }
+            catch { }
+        }
+        return stagesX != null ? (int[])stagesX.Clone() : DefaultDpiStageTable();
+    }
+
+    public static void SaveDpiStageTable(string deviceId, int[] stagesX, int[] stagesY)
+    {
+        if (string.IsNullOrEmpty(deviceId) || stagesX == null) return;
+        if (ParseStageTable(FormatStageTable(stagesX)) == null) return;
+        try
+        {
+            using (var key = Registry.CurrentUser.CreateSubKey(StageTableRegistryKey))
+            {
+                if (key == null) return;
+                key.SetValue(deviceId, FormatStageTable(stagesX));
+                if (stagesY != null && stagesY.Length == stagesX.Length && ParseStageTable(FormatStageTable(stagesY)) != null)
+                    key.SetValue(deviceId + "|Y", FormatStageTable(stagesY));
+                else
+                    key.DeleteValue(deviceId + "|Y", false);
+            }
+        }
+        catch { }
+    }
+
     // 严格按设备 ID 隔离的缓存查询。
     // 历史缺陷：旧实现会在未命中本设备缓存时回退到全局 CachedBatteryPercent，
     // 导致同一接收器 / 同一枚举轮次下的其它外设（如 Yeti Nano 麦克风）继承鼠标电量。
@@ -1454,7 +1600,8 @@ public static class LogitechDeviceHelper
                                         if (rateWritable.HasValue) SetPollingRateWriteCapability(deviceId, rateWritable.Value);
                                     }
 
-                                    int[] stageTable = new int[] { 400, 800, 1600, 3200, 6400 };
+                                    int[] stageTable = GetDpiStageTable(deviceId);
+                                    int[] stageTableY = GetDpiStageTableY(deviceId, stageTable);
 
                                     bool isBluetoothDirect = IsBluetoothHidPath(bestEndpoint.DevicePath);
                                     MouseBatteryInfo info = new MouseBatteryInfo
@@ -1479,7 +1626,7 @@ public static class LogitechDeviceHelper
                                         DpiStage = MatchDpiStage(finalDpiX, stageTable),
                                         DpiStageCount = stageTable.Length,
                                         DpiStages = stageTable,
-                                        DpiStagesY = stageTable,
+                                        DpiStagesY = stageTableY,
                                         PollingRate = finalRate,
                                         SupportedPollingRates = supportedRates,
                                         SupportsPollingRateWrite = rateWritable
@@ -1884,7 +2031,9 @@ public static class LogitechDeviceHelper
         {
             curDpiX = ep.CurrentDpi;
             curDpiY = ep.CurrentDpiY > 0 ? ep.CurrentDpiY : ep.CurrentDpi;
-            activeStage = MatchDpiStage(curDpiX);
+            int[] table = GetDpiStageTable(!string.IsNullOrEmpty(ep.DeviceId) ? ep.DeviceId : targetDeviceId);
+            activeStage = MatchDpiStage(curDpiX, table);
+            stageCount = table.Length;
             return true;
         }
 
@@ -1915,7 +2064,7 @@ public static class LogitechDeviceHelper
 
     public static int MatchDpiStage(int dpi)
     {
-        return MatchDpiStage(dpi, new int[] { 400, 800, 1600, 3200, 6400 });
+        return MatchDpiStage(dpi, DefaultDpiStageTable());
     }
 
     // 由「实测 DPI」反推当前生效档位（严禁再用硬编码常量）：

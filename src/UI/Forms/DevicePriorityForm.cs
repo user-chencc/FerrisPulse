@@ -90,7 +90,7 @@ namespace RazerBatteryTray
             btnSave.Click += (s, e) => {
                 var ids = new List<string>();
                 foreach (var it in reorderControl.Items) ids.Add(it.DeviceId);
-                DeviceManager.SavePriorityList(ids);
+                DeviceManager.SaveUserPriorityOrder(ids);
                 if (ids.Count > 0) DeviceManager.SetConfiguredPrimaryDeviceId(ids[0]);
                 this.DialogResult = DialogResult.OK;
                 this.Close();

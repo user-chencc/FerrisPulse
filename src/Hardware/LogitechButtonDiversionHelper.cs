@@ -4,7 +4,7 @@
 // 核心职责:
 //   罗技 HID++ 2.0 按键接管 (Feature 0x1B04 REPROG_CONTROLS_V4)：把鼠标顶部按键
 //   (CID 0x00C4 SmartShift/滚轮模式切换键；或 CID 0x00FD DPI 切换键，仅蓝牙直连设备) 临时
-//   divert 给本程序，按下时注入 Win+Tab。0x00FD 只在蓝牙直连时接管：G 系列游戏鼠标经
+//   divert 给本程序，按下时打开任务视图 (Win+Tab)。0x00FD 只在蓝牙直连时接管：G 系列游戏鼠标经
 //   Lightspeed 接收器/USB 连接，它们的 DPI 键要留给游戏用。
 //   1. 后台扫描线程每 10 秒枚举 046D 长报文 HID++ 端点 (含蓝牙 "vid&02046d" 路径)，
 //      每个端点一个会话线程；蓝牙/有线直连 devIdx=0xFF，接收器 (PID C5xx) 探测 1..6
@@ -16,13 +16,16 @@
 //   4. 只接管 0x1B04 getCidInfo 标记可 divert (flags & 0x20) 的目标键 (优先 0x00C4)；
 //      没有目标键的设备 (如 G502 X) 不做任何改动
 //   5. 停用/退出时撤销 divert (flags=0x02)，顶部键恢复原厂功能
+//   6. 平时用 SendInput 注入 Win+Tab；前台是游戏 (GameDetector) 或以更高权限运行/受保护的
+//      进程时，注入的按键会被 UIPI 或游戏键盘钩子吞掉，改为让资源管理器直接打开任务视图
+//      (explorer.exe shell:::{3080F90E-D7AD-11D9-BD98-0000947B0257})，失败再退回 SendInput
 //   协议实测 (蓝牙直连, HID++ 4.5, 0xFF43 / 20 字节端点):
 //   MX Anywhere 3S 046D:B037 0x1B04 @0x0A, CID 0x00C4 flags=0x31；
 //   Signature M750 046D:B02C 0x1B04 @0x09, CID 0x00FD flags=0x31 (无 0x00C4)。
 //   配置键 (HKCU\Software\FerrisPulse): LogiTopButtonWinTabEnabled (默认 0)
 //   软件 ID 固定 0x0B，与主轮询 (0x08) 区分，互不抢应答。
 // 依赖关系: LogitechDeviceHelper.cs (SetupAPI/HidD 声明与路径判定), SideButtonMacroService.cs (SendChord),
-//   ConfigManager.cs
+//   GameDetector.cs, NativeMethods.cs, ConfigManager.cs
 //
 // ⚠️ AI 维护准则 (AI MAINTENANCE DIRECTIVE - DO NOT REMOVE) ⚠️:
 // 1. [契约同步更新]: 任何 AI Agent 在修改接管的 CID、报文结构或重新下发时机时，【必须】同步更新上方说明。
@@ -32,6 +35,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -47,6 +51,7 @@ namespace RazerBatteryTray
         private const byte SoftwareId = 0x0B;
         private const ushort VK_LWIN = 0x5B;
         private const ushort VK_TAB = 0x09;
+        private const string TaskViewShellCommand = "shell:::{3080F90E-D7AD-11D9-BD98-0000947B0257}";
 
         private static readonly object sessionLock = new object();
         private static readonly Dictionary<string, Session> sessions = new Dictionary<string, Session>(StringComparer.OrdinalIgnoreCase);
@@ -229,7 +234,58 @@ namespace RazerBatteryTray
 
         private static void OnTopButtonPressed()
         {
-            ThreadPool.QueueUserWorkItem(_ => SideButtonMacroService.SendChord(VK_LWIN, VK_TAB));
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                if (IsInjectionLikelyBlocked() && OpenTaskViewViaShell()) return;
+                SideButtonMacroService.SendChord(VK_LWIN, VK_TAB);
+            });
+        }
+
+        /// <summary>前台是游戏，或是本程序无权查看令牌/已提权的进程时，注入的 Win+Tab 多半会被吞掉。</summary>
+        private static bool IsInjectionLikelyBlocked()
+        {
+            string title;
+            if (GameDetector.IsGameRunning(out title)) return true;
+
+            IntPtr fg = NativeMethods.GetForegroundWindow();
+            if (fg == IntPtr.Zero) return false;
+            uint pid;
+            NativeMethods.GetWindowThreadProcessId(fg, out pid);
+            if (pid == 0) return false;
+
+            // 反作弊保护的进程连查询句柄都拿不到，按"权限更高"处理
+            IntPtr hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+            if (hProc == IntPtr.Zero) return true;
+            try
+            {
+                IntPtr hToken;
+                if (!OpenProcessToken(hProc, TOKEN_QUERY, out hToken)) return true;
+                try
+                {
+                    int elevated, retLen;
+                    if (GetTokenInformation(hToken, TokenElevation, out elevated, 4, out retLen)) return elevated != 0;
+                }
+                finally { CloseHandle(hToken); }
+            }
+            finally { CloseHandle(hProc); }
+            return false;
+        }
+
+        /// <summary>让资源管理器直接打开任务视图，不经过键盘注入。</summary>
+        private static bool OpenTaskViewViaShell()
+        {
+            try
+            {
+                string explorer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+                ProcessStartInfo psi = new ProcessStartInfo(explorer, TaskViewShellCommand);
+                psi.UseShellExecute = false;
+                using (Process.Start(psi)) { }
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private sealed class DevState
@@ -530,5 +586,18 @@ namespace RazerBatteryTray
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool CancelIoEx(IntPtr hFile, IntPtr lpOverlapped);
+
+        private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+        private const uint TOKEN_QUERY = 0x0008;
+        private const int TokenElevation = 20;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool GetTokenInformation(IntPtr TokenHandle, int TokenInformationClass, out int TokenInformation, int TokenInformationLength, out int ReturnLength);
     }
 }
