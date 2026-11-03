@@ -505,7 +505,7 @@ namespace RazerBatteryTray
 
         {
 
-            return LogitechDeviceHelper.FastQueryDpi(out dpiX, out dpiY, out stage, out count);
+            return LogitechDeviceHelper.FastQueryDpi(out dpiX, out dpiY, out stage, out count, dev != null ? dev.DeviceId : null);
 
         }
 
@@ -536,6 +536,10 @@ namespace RazerBatteryTray
             int dy = (stagesY != null && stagesY.Length > idx) ? stagesY[idx] : dx;
 
             string devId = dev != null ? dev.DeviceId : null;
+
+            // 罗技办公鼠标没有板载档位：档位表由灵脉按设备保存，鼠标里只写当前生效的那一档
+
+            LogitechDeviceHelper.SaveDpiStageTable(devId, stagesX, stagesY);
 
             return LogitechDeviceHelper.SetLogitechDpi(dx, dy, devId);
 
